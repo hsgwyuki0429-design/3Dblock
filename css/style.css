@@ -258,6 +258,25 @@ body:not(.playing) #hudBtns { pointer-events: none; }
 }
 .btn.primary:active { transform: scale(0.98); background: var(--accent-press); }
 .btn.primary.big { padding: 16px; }
+/* モード選択ボタン (2段表示) */
+.btn.modebtn {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 13px 16px;
+}
+.btn.modebtn .mb-label { font-size: 18px; font-weight: 600; line-height: 1.1; }
+.btn.modebtn .mb-sub {
+  font-size: 12px; font-weight: 500; letter-spacing: 0; opacity: 0.92;
+  font-variant-numeric: tabular-nums;
+}
+.btn.modebtn .mb-sub b { font-weight: 700; }
+.btn.modebtn.alt { background: var(--ink); }
+.btn.modebtn.alt:active { background: #000; }
+
+.over-mode {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+  color: var(--accent); margin-bottom: 2px;
+}
+
 .btn.ghost {
   color: var(--accent);
   font-weight: 500;

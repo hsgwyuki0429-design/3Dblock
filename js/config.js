@@ -1,7 +1,18 @@
-// ========================== ツミボシ 設定 ==========================
+// ========================== 3Dblocks 設定 ==========================
 
-// グリッドの一辺 (3〜5)
-export const GRID_N = 4;
+// グリッドの一辺 (ライン消しモードの既定)
+export const GRID_N = 8;
+
+// ゲームモード
+//  line : 1軸そろえる = 1列(N マス)消し。大きな 8×8×8 で戦略的に。全ピース(3×3×3含む)
+//  plane: 2軸そろえる = 1面(N×N マス)消し。5×5×5 でレイヤーを埋める。
+//         面を埋めやすいよう大きすぎるピース(9マス超)は除外する
+// grid / maxCells はモードごとに変更可能。clear は "line" か "plane"。
+export const MODES = {
+  line:  { key: "line",  grid: 8, clear: "line",  maxCells: Infinity, label: "ライン",   sub: "1列そろえる · 8³" },
+  plane: { key: "plane", grid: 5, clear: "plane", maxCells: 9,        label: "プレーン", sub: "1面そろえる · 5³" },
+};
+export const DEFAULT_MODE = "line";
 
 // ---- オンライン世界ランキング ----
 // Firebase Realtime Database の URL を1行設定すると有効になる。
@@ -13,20 +24,24 @@ export const RANKING = {
   limit: 100,               // 取得する上位件数
 };
 
-// 面の向きごとの色 (XZ=水平 / XY=正面 / YZ=側面)
-// シングルブルー基調: 同系統ブルーの明度差だけで向きを示す (一色を基調とするミニマル)
-export const PLANE_COLORS = {
-  XZ: { base: 0x0a84ff, emissive: 0x0a84ff, edge: 0x0a3d78 },  // ブルー(標準)
-  XY: { base: 0x3ba3ff, emissive: 0x3ba3ff, edge: 0x125088 },  // ブルー(明)
-  YZ: { base: 0x0060d6, emissive: 0x0060d6, edge: 0x08305e },  // ブルー(濃)
-};
+// ピースの配色パレット。各ピースはここから1色を持つ (base=面色 / emissive=発光 / edge=輪郭)
+export const PALETTE = [
+  { base: 0xff3b6b, emissive: 0xb3103f, edge: 0xffd0dc },  // レッドピンク
+  { base: 0xff8a2b, emissive: 0xb34d00, edge: 0xffe0c0 },  // オレンジ
+  { base: 0xffd23e, emissive: 0xb38600, edge: 0xfff2c0 },  // ゴールド
+  { base: 0x35d86b, emissive: 0x0f9e42, edge: 0xc6ffd8 },  // グリーン
+  { base: 0x26d3e6, emissive: 0x0a95a6, edge: 0xc6f6ff },  // シアン
+  { base: 0x3b82ff, emissive: 0x0f47c2, edge: 0xcfe0ff },  // ブルー
+  { base: 0x9b6bff, emissive: 0x5f2fd6, edge: 0xe2d6ff },  // パープル
+  { base: 0xff5bd0, emissive: 0xc21797, edge: 0xffd6f4 },  // マゼンタ
+];
 
-// スコア
+// スコア (8×8×8 は1列8マスと重いので消去報酬を高めに)
 export const SCORE = {
   perPlacedCell: 5,     // 置いた1マスあたり
-  perClearedCell: 10,   // 消えた1マスあたり (×ライン数)
-  multiLineBonus: 60,   // 2ライン目以降、1ラインごとの追加ボーナス
-  comboBonus: 25,       // 連続クリア1回ごとの追加ボーナス
+  perClearedCell: 12,   // 消えた1マスあたり (×ライン数)
+  multiLineBonus: 120,  // 2ライン目以降、1ラインごとの追加ボーナス
+  comboBonus: 50,       // 連続クリア1回ごとの追加ボーナス
 };
 
 export const STORAGE_PREFIX = "blocks3d.";
