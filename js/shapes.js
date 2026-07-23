@@ -58,9 +58,10 @@ function normalize3(cells) {
   return cells.map((c) => c.map((x, i) => x - m[i]));
 }
 
-function pickShape(rng, gridN) {
-  // gridN に収まる形だけを対象にする
+function pickShape(rng, gridN, maxCells) {
+  // gridN に収まり、かつセル数が maxCells 以下の形だけを対象にする
   const pool = SHAPE_DEFS.filter((s) => {
+    if (s.cells.length > maxCells) return false;
     const span = [0, 1, 2].map((i) => Math.max(...s.cells.map((c) => c[i])) + 1);
     return span.every((v) => v <= gridN);
   });
@@ -78,8 +79,8 @@ function pickShape(rng, gridN) {
  * @returns {{cells:number[][], shape:string, span:number[]}}
  *   cells: 正規化済み3Dセル群 / span: 各軸の占有幅
  */
-export function generatePiece(gridN, rng = Math.random) {
-  const def = pickShape(rng, gridN);
+export function generatePiece(gridN, rng = Math.random, maxCells = Infinity) {
+  const def = pickShape(rng, gridN, maxCells);
   let cells = def.cells.map((c) => c.slice());
   cells = applyRot(cells, rotX, Math.floor(rng() * 4));
   cells = applyRot(cells, rotY, Math.floor(rng() * 4));

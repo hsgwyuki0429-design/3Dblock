@@ -96,12 +96,43 @@ export class Board {
     return lines;
   }
 
-  /** 置いたと仮定した場合に完成するライン (仮置きプレビュー用) */
-  linesIfPlaced(cells, ax, ay, az) {
+  /**
+   * 完成している面(軸に垂直な N×N のレイヤー)を列挙する。
+   * @returns {{axis:number, fixed:number, cells:number[][]}[]}
+   *   axis: 面の法線となる軸 (0=x,1=y,2=z) / cells: 面上の全セル
+   */
+  completedPlanes() {
+    const n = this.n;
+    const planes = [];
+    for (let axis = 0; axis < 3; axis++) {
+      for (let f = 0; f < n; f++) {
+        const cells = [];
+        let full = true;
+        loop:
+        for (let i = 0; i < n; i++) {
+          for (let j = 0; j < n; j++) {
+            const p = planeCell(axis, f, i, j);
+            if (!this.get(...p)) { full = false; break loop; }
+            cells.push(p);
+          }
+        }
+        if (full) planes.push({ axis, fixed: f, cells });
+      }
+    }
+    return planes;
+  }
+
+  /** クリア種別に応じて完成グループ(ライン or 面)を返す */
+  completedGroups(clear) {
+    return clear === "plane" ? this.completedPlanes() : this.completedLines();
+  }
+
+  /** 置いたと仮定した場合に完成するグループ (仮置きプレビュー用) */
+  groupsIfPlaced(cells, ax, ay, az, clear) {
     for (const [dx, dy, dz] of cells) this.set(ax + dx, ay + dy, az + dz, 1);
-    const lines = this.completedLines();
+    const g = this.completedGroups(clear);
     for (const [dx, dy, dz] of cells) this.set(ax + dx, ay + dy, az + dz, 0);
-    return lines;
+    return g;
   }
 
   /** ライン群のセルを消去し、消えたセル一覧(重複なし)を返す */
@@ -133,4 +164,11 @@ function axisCell(axis, i, a, b) {
   if (axis === 0) return [i, a, b];
   if (axis === 1) return [a, i, b];
   return [a, b, i];
+}
+
+// 法線 axis・その軸の固定座標 f の面上で、残り2軸を (i,j) としたセル座標
+function planeCell(axis, f, i, j) {
+  if (axis === 0) return [f, i, j];
+  if (axis === 1) return [i, f, j];
+  return [i, j, f];
 }

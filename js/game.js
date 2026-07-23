@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import { GRID_N as N, PALETTE, SCORE, STORAGE_PREFIX } from "./config.js";
+import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX } from "./config.js";
 import { generatePiece } from "./shapes.js";
 import { Board } from "./board.js";
 import { initAudio, setMuted, sfx } from "./audio.js";
@@ -15,9 +15,7 @@ import {
 
 // ---------------------------------------------------------------- 定数
 
-const OFF = (N - 1) / 2;               // グリッド中心合わせオフセット
 const CUBE = 0.92;                     // ブロックの一辺 (1マス=1.0)
-const TARGET = new THREE.Vector3(0, N * 0.42, 0);
 const LIFT_PX = 64;                    // 指よりこれだけ上をポイントする
 const store = {
   get: (k, d) => localStorage.getItem(STORAGE_PREFIX + k) ?? d,
@@ -26,11 +24,20 @@ const store = {
 
 // ---------------------------------------------------------------- 状態
 
+// N / OFF / board / カメラ距離はモード(グリッドサイズ)で変わるので可変
+let N = MODES[DEFAULT_MODE].grid;
+let OFF = (N - 1) / 2;
+let board = new Board(N);
+let mode = MODES[DEFAULT_MODE];        // 現在のモード
+const TARGET = new THREE.Vector3(0, N * 0.42, 0);
+
+const bestKey = (m) => "best." + m;
+const getBest = (m) => Number(store.get(bestKey(m), 0)) || 0;
+
 let state = "title";                   // title | play | over
-const board = new Board(N);
 const hand = [null, null, null];       // 手持ち3ピース
 let score = 0;
-let best = Number(store.get("best", 0)) || 0;
+let best = getBest(mode.key);
 let combo = 0;                         // 連続クリア数
 let submitted = false;
 
@@ -40,7 +47,7 @@ const cam = {
   tAz: -0.65, tPol: 1.05, tR: N * 3.4,
 };
 const POL_MIN = 0.32, POL_MAX = 1.42;
-const R_MIN = N * 2.0, R_MAX = N * 6.0;
+let R_MIN = N * 2.0, R_MAX = N * 6.0;
 
 // 入力
 const pointers = new Map();            // pointerId -> {x, y}
@@ -161,8 +168,24 @@ function cellWorld(x, y, z, out = new THREE.Vector3()) {
 
 // ---------------------------------------------------------------- 舞台装置
 
+const stageGroup = new THREE.Group();
+scene.add(stageGroup);
 let floorPlate;
-{
+
+function disposeObj3D(o) {
+  o.traverse((c) => {
+    if (c.geometry) c.geometry.dispose?.();
+    if (c.material) c.material.dispose?.();
+  });
+}
+
+// 現在の N に合わせて床・グリッド・ケージを組み直す
+function buildStage() {
+  while (stageGroup.children.length) {
+    const c = stageGroup.children.pop();
+    disposeObj3D(c);
+  }
+
   // 床プレート (マットな明るいグレー、柔らかい接地影を受ける)
   const plateGeo = new RoundedBoxGeometry(N + 0.7, 0.2, N + 0.7, 4, 0.08);
   const plateMat = new THREE.MeshStandardMaterial({
@@ -171,7 +194,7 @@ let floorPlate;
   floorPlate = new THREE.Mesh(plateGeo, plateMat);
   floorPlate.position.y = -0.1;
   floorPlate.receiveShadow = true;
-  scene.add(floorPlate);
+  stageGroup.add(floorPlate);
 
   // 床グリッド線 (薄いヘアライン)
   const pts = [];
@@ -181,20 +204,36 @@ let floorPlate;
   }
   const gridGeo = new THREE.BufferGeometry();
   gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-  scene.add(new THREE.LineSegments(
+  stageGroup.add(new THREE.LineSegments(
     gridGeo,
     new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.9 })
   ));
 
   // 外枠ケージ (立体の範囲を示す極薄ライン)
-  const s = N / 2;
   const cage = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(N, N, N)),
     new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.5 })
   );
-  cage.position.y = s;
-  scene.add(cage);
+  cage.position.y = N / 2;
+  stageGroup.add(cage);
 }
+
+// N(=モードのグリッドサイズ)を切り替え、盤面・舞台・カメラ距離を作り直す
+function configureForN(n) {
+  N = n;
+  OFF = (N - 1) / 2;
+  board = new Board(N);
+  TARGET.set(0, N * 0.42, 0);
+  cam.r = cam.tR = N * 3.4;
+  R_MIN = N * 2.0;
+  R_MAX = N * 6.0;
+  keyLight.shadow.camera.left = keyLight.shadow.camera.bottom = -N * 1.7;
+  keyLight.shadow.camera.right = keyLight.shadow.camera.top = N * 1.7;
+  keyLight.shadow.camera.far = Math.max(40, N * 7);
+  keyLight.shadow.camera.updateProjectionMatrix();
+  buildStage();
+}
+configureForN(N);
 
 // ---------------------------------------------------------------- 盤面メッシュ管理
 
@@ -310,7 +349,7 @@ function pickColor() {
 
 function refillHand() {
   for (let i = 0; i < 3; i++) {
-    const p = generatePiece(N);
+    const p = generatePiece(N, Math.random, mode.maxCells);
     p.color = pickColor();
     hand[i] = p;
     setTrayPiece(i, hand[i]);
@@ -419,7 +458,7 @@ function setSnap(p) {
 
   held.ghost.visible = true;
   cellWorld(p[0], p[1], p[2], held.ghost.position);
-  held.wouldClear = board.linesIfPlaced(held.piece.cells, p[0], p[1], p[2]);
+  held.wouldClear = board.groupsIfPlaced(held.piece.cells, p[0], p[1], p[2], mode.clear);
   const clearing = held.wouldClear.length > 0;
   held.clearing = clearing;   // tick 側で仮ピースの点滅を強める
   if (clearing) {
@@ -464,9 +503,9 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
   addScore(piece.cells.length * SCORE.perPlacedCell);
   sfx.place();
 
-  const lines = board.completedLines();
-  if (lines.length) {
-    doClear(lines, [ax + piece.span[0] / 2 - 0.5, ay, az]);
+  const groups = board.completedGroups(mode.clear);
+  if (groups.length) {
+    doClear(groups, [ax + piece.span[0] / 2 - 0.5, ay, az]);
   } else {
     combo = 0;
   }
@@ -476,31 +515,32 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
   return true;
 }
 
-function doClear(lines, nearCell) {
+function doClear(groups, nearCell) {
   combo++;
-  const cleared = board.clearLines(lines);
+  const cleared = board.clearLines(groups);
   const pts =
-    cleared.length * SCORE.perClearedCell * lines.length +
-    (lines.length > 1 ? SCORE.multiLineBonus * (lines.length - 1) : 0) +
+    cleared.length * SCORE.perClearedCell * groups.length +
+    (groups.length > 1 ? SCORE.multiLineBonus * (groups.length - 1) : 0) +
     (combo > 1 ? SCORE.comboBonus * combo : 0);
   addScore(pts);
 
   // 演出 (控えめ・ミニマル)
-  const toastText = `${Math.min(lines.length, 4)}列そろえた`;
+  const unit = mode.clear === "plane" ? "面" : "列";
+  const toastText = `${groups.length}${unit}そろえた`;
   showToast(combo > 1 ? `${toastText} · コンボ×${combo}` : toastText);
   spawnScorePop(pts, nearCell);
-  sfx.clear(lines.length);
-  if (navigator.vibrate) navigator.vibrate(lines.length > 1 ? [18, 30, 18] : 14);
+  sfx.clear(groups.length);
+  if (navigator.vibrate) navigator.vibrate(groups.length > 1 ? [18, 30, 18] : 14);
 
   // ブロックを上品にスケールアウトさせて消す
-  for (const line of lines) {
-    line.cells.forEach((cell, i) => {
+  for (const group of groups) {
+    group.cells.forEach((cell, i) => {
       const mesh = blockMeshes.get(board.idx(...cell));
       if (!mesh) return;
       blockMeshes.delete(board.idx(...cell));
-      anims.push(vanish(mesh, i * 0.045));
+      anims.push(vanish(mesh, i * 0.03));
     });
-    spawnBurst(line.cells);
+    spawnBurst(group.cells);
   }
 }
 
@@ -601,7 +641,7 @@ function addScore(pts) {
   $("score").classList.add("bump");
   if (score > best) {
     best = score;
-    store.set("best", best);
+    store.set(bestKey(mode.key), best);
     $("best").textContent = best;
   }
 }
@@ -628,8 +668,12 @@ function spawnScorePop(pts, cell) {
 
 // ---------------------------------------------------------------- ゲームフロー
 
-function startGame() {
-  board.clearAll();
+function startGame(modeKey = mode.key) {
+  mode = MODES[modeKey] || MODES[DEFAULT_MODE];
+  best = getBest(mode.key);
+  if (N !== mode.grid) configureForN(mode.grid);   // グリッドが変わるモードは舞台ごと作り直し
+  else board.clearAll();
+
   for (const m of blockMeshes.values()) {
     blocksGroup.remove(m);
     m.material.dispose();
@@ -658,6 +702,7 @@ function checkGameOver() {
 function showGameOver() {
   document.body.classList.remove("playing");
   sfx.over();
+  $("overMode").textContent = `${mode.label}モード`;
   $("overScore").textContent = score;
   $("overBestNote").textContent = score >= best && score > 0 ? "自己ベスト更新" : "";
   $("submitResult").textContent = "";
@@ -670,33 +715,39 @@ function showGameOver() {
 
 // ---------------------------------------------------------------- ランキングUI
 
-let rankTab = isOnlineEnabled() ? "world" : "local";
+let rankTab = isOnlineEnabled() ? "world" : "local";   // world | local
+let rankMode = DEFAULT_MODE;                            // line | plane
 
 async function renderRankList() {
   const list = $("rankList");
   $("tabWorld").classList.toggle("active", rankTab === "world");
   $("tabLocal").classList.toggle("active", rankTab === "local");
+  $("tabModeLine").classList.toggle("active", rankMode === "line");
+  $("tabModePlane").classList.toggle("active", rankMode === "plane");
 
   if (rankTab === "local") {
-    const rows = getLocalRanks();
+    const rows = getLocalRanks(rankMode);
     list.innerHTML = rows.length
       ? rows.map((r, i) => rankRowHtml(i + 1, r.name, r.score)).join("")
-      : `<div class="rank-note">まだ記録がありません。<br>星を積んで、最初の記録を残そう。</div>`;
+      : `<div class="rank-note">まだ記録がありません。<br>最初の記録を残そう。</div>`;
     return;
   }
 
   if (!isOnlineEnabled()) {
-    list.innerHTML = `<div class="rank-note">オンライン世界ランキングは未設定です。<br>README の手順(約5分)で有効化できます。<br><br>それまでは「この端末」タブの記録が使えます。</div>`;
+    list.innerHTML = `<div class="rank-note">オンライン世界ランキングは未設定です。<br>README の手順で有効化できます。<br><br>それまでは「この端末」タブの記録が使えます。</div>`;
     return;
   }
-  list.innerHTML = `<div class="rank-note">星の記録を読み込み中…</div>`;
+  list.innerHTML = `<div class="rank-note">読み込み中…</div>`;
+  const reqMode = rankMode;
   try {
-    const rows = await fetchWorldRanks();
+    const rows = await fetchWorldRanks(reqMode);
+    if (reqMode !== rankMode) return;   // 取得中にモード切替されたら破棄
     const myName = store.get("name", "");
     list.innerHTML = rows && rows.length
       ? rows.map((r, i) => rankRowHtml(i + 1, r.name, r.score, r.name === myName)).join("")
       : `<div class="rank-note">まだ誰も記録していません。<br>世界最初の1人になろう。</div>`;
   } catch {
+    if (reqMode !== rankMode) return;
     list.innerHTML = `<div class="rank-note">読み込みに失敗しました。<br>通信環境を確認してもう一度どうぞ。</div>`;
   }
 }
@@ -725,17 +776,17 @@ async function submitScore() {
   btn.disabled = true;
   btn.style.opacity = 0.5;
 
-  const localRank = addLocalRank(name, score);
+  const localRank = addLocalRank(name, score, mode.key);
   if (!isOnlineEnabled()) {
-    $("submitResult").textContent = `この端末で ${localRank}位に記録しました`;
+    $("submitResult").textContent = `この端末の${mode.label}で ${localRank}位に記録しました`;
     return;
   }
-  $("submitResult").textContent = "夜空に送信中…";
+  $("submitResult").textContent = "送信中…";
   try {
-    await submitWorldScore(name, score);
+    await submitWorldScore(name, score, mode.key);
     let posText = "";
     try {
-      const rows = await fetchWorldRanks();
+      const rows = await fetchWorldRanks(mode.key);
       const pos = rows.findIndex((r) => r.name === name && r.score === score) + 1;
       if (pos > 0) posText = ` — 世界 ${pos}位!`;
     } catch { /* 順位表示は任意 */ }
@@ -827,22 +878,23 @@ document.addEventListener("dblclick", (e) => e.preventDefault());
 
 // ---------------------------------------------------------------- ボタン類
 
-$("btnStart").addEventListener("click", () => { sfx.ui(); initAudio(); startGame(); });
+$("btnStartLine").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("line"); });
+$("btnStartPlane").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("plane"); });
 $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 $("btnHelp").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
-$("btnRank").addEventListener("click", () => {
+function openRanking() {
   sfx.ui();
+  rankMode = mode.key;   // 直近に遊んだモードのランキングを開く
   showOverlay("ovRank");
   renderRankList();
-});
-$("btnOverRank").addEventListener("click", () => {
-  sfx.ui();
-  showOverlay("ovRank");
-  renderRankList();
-});
+}
+$("btnRank").addEventListener("click", openRanking);
+$("btnOverRank").addEventListener("click", openRanking);
 $("tabWorld").addEventListener("click", () => { rankTab = "world"; renderRankList(); });
 $("tabLocal").addEventListener("click", () => { rankTab = "local"; renderRankList(); });
+$("tabModeLine").addEventListener("click", () => { rankMode = "line"; renderRankList(); });
+$("tabModePlane").addEventListener("click", () => { rankMode = "plane"; renderRankList(); });
 $("btnSubmit").addEventListener("click", submitScore);
 
 document.querySelectorAll(".ov-close").forEach((btn) => {
@@ -866,8 +918,12 @@ document.querySelectorAll(".ov-close").forEach((btn) => {
   });
 }
 
+function refreshTitleBests() {
+  $("titleBestLine").textContent = getBest("line");
+  $("titleBestPlane").textContent = getBest("plane");
+}
 $("best").textContent = best;
-$("titleBest").textContent = best;
+refreshTitleBests();
 
 // ---------------------------------------------------------------- メインループ
 
@@ -962,7 +1018,8 @@ tick();
 // ---------------------------------------------------------------- デバッグ/テスト用フック
 
 window.__tsumi = {
-  board,
+  get board() { return board; },   // board はモード切替で再生成されるので getter
+  get mode() { return mode.key; },
   hand,
   state: () => state,
   score: () => score,

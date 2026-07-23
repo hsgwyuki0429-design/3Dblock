@@ -59,10 +59,16 @@
   <div class="ov-inner titlecard">
     <div class="logo-sub">3D Puzzle</div>
     <h1 class="logo">3Dblocks</h1>
-    <p class="tagline">立方体にブロックを積み、<br>タテ・ヨコ・奥行きの1列をそろえて消す。</p>
-    <button id="btnStart" class="btn primary big">プレイ</button>
+    <p class="tagline">立方体にブロックを積んで、<br>そろった列/面を消す。モードを選んでプレイ。</p>
+    <button id="btnStartLine" class="btn primary big modebtn">
+      <span class="mb-label">ライン</span>
+      <span class="mb-sub">1列そろえる · 8³ · Best <b id="titleBestLine">0</b></span>
+    </button>
+    <button id="btnStartPlane" class="btn primary big modebtn alt">
+      <span class="mb-label">プレーン</span>
+      <span class="mb-sub">1面そろえる · 5³ · Best <b id="titleBestPlane">0</b></span>
+    </button>
     <button id="btnHowTitle" class="btn ghost">遊び方</button>
-    <div class="title-best">Best <b id="titleBest">0</b></div>
   </div>
 </div>
 
@@ -73,7 +79,7 @@
     <ul class="howto">
       <li><span class="how-ic">1</span><div><b>視点をまわす</b><br>なにも持っていないとき、1本指ドラッグで回転。2本指ピンチでズーム。</div></li>
       <li><span class="how-ic">2</span><div><b>ブロックを置く</b><br>下のブロックをドラッグ。置ける場所に近づくと仮置きされ、指を離すと確定。トレイまで戻せばキャンセル。</div></li>
-      <li><span class="how-ic">3</span><div><b>1列そろえて消す</b><br>タテ・ヨコ・奥行き、どの向きでも1列そろうと消える。同時に消すほど高得点。</div></li>
+      <li><span class="how-ic">3</span><div><b>そろえて消す</b><br><b>ライン</b>はどれかの軸で1列そろうと消える(8³)。<b>プレーン</b>は軸に垂直な1面がすべて埋まると消える(5³)。同時に消すほど高得点。</div></li>
       <li><span class="how-ic">4</span><div><b>置ける場所</b><br>ブロックは「床」か「すでに置いたブロック」に接する場所だけ。3つとも置けなくなったら終了。</div></li>
     </ul>
     <button class="btn primary ov-close" data-close="ovHelp">とじる</button>
@@ -84,6 +90,10 @@
 <div class="ov" id="ovRank">
   <div class="ov-inner panel">
     <h2 class="panel-title">ランキング</h2>
+    <div class="tabs">
+      <button class="tab active" id="tabModeLine">ライン</button>
+      <button class="tab" id="tabModePlane">プレーン</button>
+    </div>
     <div class="tabs">
       <button class="tab active" id="tabWorld">世界</button>
       <button class="tab" id="tabLocal">この端末</button>
@@ -97,6 +107,7 @@
 <div class="ov" id="ovOver">
   <div class="ov-inner panel over">
     <div class="over-sub">GAME OVER</div>
+    <div class="over-mode" id="overMode"></div>
     <div class="over-score" id="overScore">0</div>
     <div class="over-best" id="overBestNote"></div>
     <div class="namebox">
