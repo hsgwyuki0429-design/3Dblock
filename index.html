@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f5f5f7">
+<title>3Dblocks — 積んで、そろえる立体パズル</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%230071e3'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="vignette"></div>
+
+<!-- トレイの台座(canvasの下層に敷く) -->
+<div id="tray" aria-hidden="true">
+  <div class="tray-card" data-slot="0"></div>
+  <div class="tray-card" data-slot="1"></div>
+  <div class="tray-card" data-slot="2"></div>
+</div>
+<div id="trayLabel">ドラッグして配置</div>
+
+<canvas id="gl"></canvas>
+
+<!-- HUD -->
+<header id="hud">
+  <div id="scoreWrap">
+    <div id="scoreLabel">SCORE</div>
+    <div id="score">0</div>
+    <div id="bestLine">BEST <span id="best">0</span></div>
+  </div>
+  <nav id="hudBtns">
+    <button id="btnRank" class="iconbtn" aria-label="ランキング">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20v-6M12 20V4M18 20v-9"/></svg>
+    </button>
+    <button id="btnHelp" class="iconbtn" aria-label="遊び方">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.7 2.1-2.7 3.9"/><circle cx="12" cy="17.3" r="0.6" fill="currentColor" stroke="none"/></svg>
+    </button>
+    <button id="btnMute" class="iconbtn" aria-label="サウンド"></button>
+  </nav>
+</header>
+
+<div id="comboToast"></div>
+<div id="popLayer"></div>
+
+<!-- タイトル -->
+<div class="ov show" id="ovTitle">
+  <div class="ov-inner titlecard">
+    <div class="logo-sub">3D Puzzle</div>
+    <h1 class="logo">3Dblocks</h1>
+    <p class="tagline">立方体にブロックを積み、<br>タテ・ヨコ・奥行きの1列をそろえて消す。</p>
+    <button id="btnStart" class="btn primary big">プレイ</button>
+    <button id="btnHowTitle" class="btn ghost">遊び方</button>
+    <div class="title-best">Best <b id="titleBest">0</b></div>
+  </div>
+</div>
+
+<!-- 遊び方 -->
+<div class="ov" id="ovHelp">
+  <div class="ov-inner panel">
+    <h2 class="panel-title">遊び方</h2>
+    <ul class="howto">
+      <li><span class="how-ic">1</span><div><b>視点をまわす</b><br>なにも持っていないとき、1本指ドラッグで回転。2本指ピンチでズーム。</div></li>
+      <li><span class="how-ic">2</span><div><b>ブロックを置く</b><br>下のブロックをドラッグ。置ける場所に近づくと仮置きされ、指を離すと確定。トレイまで戻せばキャンセル。</div></li>
+      <li><span class="how-ic">3</span><div><b>1列そろえて消す</b><br>タテ・ヨコ・奥行き、どの向きでも1列そろうと消える。同時に消すほど高得点。</div></li>
+      <li><span class="how-ic">4</span><div><b>置ける場所</b><br>ブロックは「床」か「すでに置いたブロック」に接する場所だけ。3つとも置けなくなったら終了。</div></li>
+    </ul>
+    <button class="btn primary ov-close" data-close="ovHelp">とじる</button>
+  </div>
+</div>
+
+<!-- ランキング -->
+<div class="ov" id="ovRank">
+  <div class="ov-inner panel">
+    <h2 class="panel-title">ランキング</h2>
+    <div class="tabs">
+      <button class="tab active" id="tabWorld">世界</button>
+      <button class="tab" id="tabLocal">この端末</button>
+    </div>
+    <div id="rankList" class="ranklist"><div class="rank-note">読み込み中…</div></div>
+    <button class="btn primary ov-close" data-close="ovRank">とじる</button>
+  </div>
+</div>
+
+<!-- ゲームオーバー -->
+<div class="ov" id="ovOver">
+  <div class="ov-inner panel over">
+    <div class="over-sub">GAME OVER</div>
+    <div class="over-score" id="overScore">0</div>
+    <div class="over-best" id="overBestNote"></div>
+    <div class="namebox">
+      <input id="nameInput" maxlength="12" placeholder="なまえ" autocomplete="off">
+      <button id="btnSubmit" class="btn small">記録する</button>
+    </div>
+    <div id="submitResult" class="submit-result"></div>
+    <button id="btnAgain" class="btn primary big">もういちど</button>
+    <button id="btnOverRank" class="btn ghost">ランキングをみる</button>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
