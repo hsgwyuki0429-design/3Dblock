@@ -1,48 +1,69 @@
-// 2D形状の定義と、3D空間(2軸+厚み1)のピース生成
+// 3Dブロックの形状定義と生成
+// 「もう1軸は厚み1(板状)」の制約は撤廃。ピースは3軸に広がる立体ポリキューブ。
 
-// ブロックブラスト系の2D形状 (u,v)。w は出現の重み
+// 直方体(sx×sy×sz)のセル群を作るヘルパー
+function box(sx, sy, sz) {
+  const cells = [];
+  for (let x = 0; x < sx; x++)
+    for (let y = 0; y < sy; y++)
+      for (let z = 0; z < sz; z++)
+        cells.push([x, y, z]);
+  return cells;
+}
+
+// 形状定義 (3Dセル)。w は出現の重み
 const SHAPE_DEFS = [
   // --- 小さめ (置きやすい) ---
-  { name: "dot",  w: 12, cells: [[0, 0]] },
-  { name: "i2",   w: 11, cells: [[0, 0], [1, 0]] },
-  { name: "i3",   w: 10, cells: [[0, 0], [1, 0], [2, 0]] },
-  { name: "i4",   w: 7,  cells: [[0, 0], [1, 0], [2, 0], [3, 0]] },
-  { name: "v3",   w: 10, cells: [[0, 0], [1, 0], [0, 1]] },
-  { name: "o4",   w: 9,  cells: [[0, 0], [1, 0], [0, 1], [1, 1]] },
-  { name: "l4",   w: 7,  cells: [[0, 0], [0, 1], [0, 2], [1, 2]] },
-  { name: "t4",   w: 7,  cells: [[0, 0], [1, 0], [2, 0], [1, 1]] },
-  { name: "s4",   w: 6,  cells: [[1, 0], [2, 0], [0, 1], [1, 1]] },
-  { name: "z4",   w: 6,  cells: [[0, 0], [1, 0], [1, 1], [2, 1]] },
-  { name: "o6",   w: 5,  cells: [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]] },
-  { name: "plus", w: 6,  cells: [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]] },
-  // --- 大きめ / むずめ (ブロックブラストの難ピース) ---
-  { name: "i5",   w: 5,  cells: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] },
-  { name: "sq3",  w: 7,  cells: [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1], [0, 2], [1, 2], [2, 2]] }, // 3×3
-  { name: "l5",   w: 5,  cells: [[0, 0], [0, 1], [0, 2], [0, 3], [1, 3]] },
-  { name: "u5",   w: 5,  cells: [[0, 0], [2, 0], [0, 1], [1, 1], [2, 1]] },
-  { name: "t5",   w: 4,  cells: [[0, 0], [1, 0], [2, 0], [3, 0], [1, 1]] },
-  { name: "cor5", w: 4,  cells: [[0, 0], [1, 0], [2, 0], [0, 1], [0, 2]] }, // 大きなL字(かぎ)
-  { name: "rect6",w: 4,  cells: [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2]] }, // 2×3
+  { name: "mono",   w: 11, cells: [[0, 0, 0]] },
+  { name: "domino", w: 10, cells: [[0, 0, 0], [1, 0, 0]] },
+  { name: "tri_i",  w: 9,  cells: [[0, 0, 0], [1, 0, 0], [2, 0, 0]] },
+  { name: "tri_l",  w: 10, cells: [[0, 0, 0], [1, 0, 0], [0, 1, 0]] },
+
+  // --- テトロミノ (平面) ---
+  { name: "i4",     w: 6,  cells: [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]] },
+  { name: "sq4",    w: 8,  cells: box(2, 2, 1) },
+  { name: "l4",     w: 7,  cells: [[0, 0, 0], [0, 1, 0], [0, 2, 0], [1, 2, 0]] },
+  { name: "t4",     w: 7,  cells: [[0, 0, 0], [1, 0, 0], [2, 0, 0], [1, 1, 0]] },
+  { name: "s4",     w: 6,  cells: [[1, 0, 0], [2, 0, 0], [0, 1, 0], [1, 1, 0]] },
+
+  // --- 立体テトロミノ (真の3D) ---
+  { name: "tripod", w: 7,  cells: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]] }, // 3方向コーナー
+  { name: "twist",  w: 6,  cells: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, 1]] }, // ねじれ階段
+
+  // --- 中 (立体・平面) ---
+  { name: "rect6",  w: 5,  cells: box(3, 2, 1) },                 // 2×3 平面
+  { name: "flat9",  w: 6,  cells: box(3, 3, 1) },                 // 3×3 平面
+  { name: "cube8",  w: 6,  cells: box(2, 2, 2) },                 // 2×2×2 立方体
+  { name: "L5",     w: 5,  cells: [[0, 0, 0], [0, 1, 0], [0, 2, 0], [0, 3, 0], [1, 3, 0]] },
+  { name: "corner5",w: 5,  cells: [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0]] }, // 立体かぎ
+  { name: "plus7",  w: 3,  cells: [[1, 1, 1], [0, 1, 1], [2, 1, 1], [1, 0, 1], [1, 2, 1], [1, 1, 0], [1, 1, 2]] }, // 3D十字
+  { name: "slab12", w: 3,  cells: box(3, 2, 2) },                 // 3×2×2
+
+  // --- 大 (むずめ) ---
+  { name: "cube27", w: 3,  cells: box(3, 3, 3) },                 // 3×3×3 立方体
 ];
 
-const PLANES = ["XZ", "XY", "YZ"];
+// 90°回転 (各軸)
+const rotX = ([x, y, z]) => [x, -z, y];
+const rotY = ([x, y, z]) => [z, y, -x];
+const rotZ = ([x, y, z]) => [-y, x, z];
 
-function rotate90(cells) {
-  return cells.map(([u, v]) => [v, -u]);
-}
-function mirror(cells) {
-  return cells.map(([u, v]) => [-u, v]);
-}
-function normalize2(cells) {
-  const mu = Math.min(...cells.map((c) => c[0]));
-  const mv = Math.min(...cells.map((c) => c[1]));
-  return cells.map(([u, v]) => [u - mu, v - mv]);
+function applyRot(cells, fn, times) {
+  for (let i = 0; i < times; i++) cells = cells.map(fn);
+  return cells;
 }
 
-function pickShape(rng, maxSpan) {
-  const pool = SHAPE_DEFS.filter((s) =>
-    s.cells.every(([u, v]) => u < maxSpan && v < maxSpan)
-  );
+function normalize3(cells) {
+  const m = [0, 1, 2].map((i) => Math.min(...cells.map((c) => c[i])));
+  return cells.map((c) => c.map((x, i) => x - m[i]));
+}
+
+function pickShape(rng, gridN) {
+  // gridN に収まる形だけを対象にする
+  const pool = SHAPE_DEFS.filter((s) => {
+    const span = [0, 1, 2].map((i) => Math.max(...s.cells.map((c) => c[i])) + 1);
+    return span.every((v) => v <= gridN);
+  });
   const total = pool.reduce((a, s) => a + s.w, 0);
   let r = rng() * total;
   for (const s of pool) {
@@ -52,35 +73,18 @@ function pickShape(rng, maxSpan) {
   return pool[pool.length - 1];
 }
 
-// (u,v) を plane に応じて3Dへ。v は垂直面では上方向(+y)に対応させる
-function toPlane(cells2, plane) {
-  switch (plane) {
-    case "XZ": return cells2.map(([u, v]) => [u, 0, v]);
-    case "XY": return cells2.map(([u, v]) => [u, v, 0]);
-    case "YZ": return cells2.map(([u, v]) => [0, v, u]);
-  }
-}
-
-function normalize3(cells) {
-  const m = [0, 1, 2].map((i) => Math.min(...cells.map((c) => c[i])));
-  return cells.map((c) => c.map((x, i) => x - m[i]));
-}
-
 /**
  * ピースを1つ生成する。
- * @returns {{cells:number[][], plane:string, shape:string, span:number[]}}
- *   cells: 正規化済み3Dセル群 / plane: 広がる面(生成後不変) / span: 各軸の占有幅
+ * @returns {{cells:number[][], shape:string, span:number[]}}
+ *   cells: 正規化済み3Dセル群 / span: 各軸の占有幅
  */
 export function generatePiece(gridN, rng = Math.random) {
   const def = pickShape(rng, gridN);
-  let c2 = def.cells;
-  const rot = Math.floor(rng() * 4);
-  for (let i = 0; i < rot; i++) c2 = rotate90(c2);
-  if (rng() < 0.5) c2 = mirror(c2);
-  c2 = normalize2(c2);
-
-  const plane = PLANES[Math.floor(rng() * PLANES.length)];
-  const cells = normalize3(toPlane(c2, plane));
+  let cells = def.cells.map((c) => c.slice());
+  cells = applyRot(cells, rotX, Math.floor(rng() * 4));
+  cells = applyRot(cells, rotY, Math.floor(rng() * 4));
+  cells = applyRot(cells, rotZ, Math.floor(rng() * 4));
+  cells = normalize3(cells);
   const span = [0, 1, 2].map((i) => Math.max(...cells.map((c) => c[i])) + 1);
-  return { cells, plane, shape: def.name, span };
+  return { cells, shape: def.name, span };
 }
