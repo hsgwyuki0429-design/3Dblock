@@ -1,1 +1,86 @@
-# 3Dblock
+# ツミボシ — 3D Block Blast
+
+星のかけらを立方体グリッドに積み、タテ・ヨコ・奥行きのどれかで1列そろえると
+流れ星になって消える 3D パズルゲーム。スマホのブラウザ向け(three.js 使用)。
+
+## 遊び方
+
+| 操作 | 動作 |
+| --- | --- |
+| 1本指ドラッグ(何も持っていない) | 視点の回転 |
+| 1本指ドラッグ(かけらを持っている) | ピース移動。置ける場所に近づくと自動スナップして仮表示、指を離すと確定 |
+| トレイまで指を戻す | 配置キャンセル(手持ちに戻る) |
+| 2本指ピンチ | ズームイン / アウト |
+
+- ピースは**床**か**すでに積まれたブロック**に接する場所にだけ置ける
+- X・Y・Z いずれかの軸で1列そろうとそのラインが消える(複数同時でボーナス)
+- 手持ち3つのどれも置けなくなったらゲームオーバー
+
+## 動かし方
+
+ビルド不要の静的サイトです。そのままホスティングするだけで動きます。
+
+```bash
+# ローカルで試す
+python3 -m http.server 8000
+# → スマホと同じ Wi-Fi なら http://<PCのIP>:8000 で実機確認できる
+```
+
+GitHub Pages なら: リポジトリの Settings → Pages → Branch にこのブランチを指定するだけ。
+
+## オンライン世界ランキングを有効にする(約5分)
+
+ランキングは Firebase Realtime Database の REST API を SDK なしで直接使います。
+未設定の間は自動的に「この端末のランキング」のみで動作します。
+
+1. [Firebase Console](https://console.firebase.google.com/) で無料プロジェクトを作成
+2. 「構築 → Realtime Database」→「データベースを作成」(ロケーションはどこでも可)
+3. セキュリティルールを次のように設定:
+
+   ```json
+   {
+     "rules": {
+       "tsumiboshi": {
+         "v1": {
+           ".read": true,
+           ".indexOn": ["s"],
+           "$entry": {
+             ".write": "!data.exists()",
+             ".validate": "newData.hasChildren(['n','s','t']) && newData.child('n').isString() && newData.child('n').val().length <= 12 && newData.child('s').isNumber() && newData.child('s').val() >= 0"
+           }
+         }
+       }
+     }
+   }
+   ```
+
+   (追記のみ許可・改ざん防止のバリデーション付き。カジュアルなランキング用途を想定)
+
+4. データベースの URL(`https://xxxx-default-rtdb.….firebasedatabase.app` の形式)をコピーし、
+   [`js/config.js`](js/config.js) の `RANKING.endpoint` に貼り付ける:
+
+   ```js
+   export const RANKING = {
+     endpoint: "https://xxxx-default-rtdb.asia-southeast1.firebasedatabase.app",
+     path: "tsumiboshi/v1",
+     limit: 100,
+   };
+   ```
+
+これだけで、ゲームオーバー画面から世界ランキングへの登録と閲覧ができるようになります。
+
+> **注意**: クライアントのみで完結する構成のため、本気の不正対策はできません。
+> 友達や世界のプレイヤーとゆるく競うカジュアルランキングとして使ってください。
+
+## 構成
+
+```
+index.html        エントリ(UI マークアップ)
+css/style.css     ビジュアルテーマ
+js/config.js      グリッドサイズ・色・スコア・ランキング設定
+js/shapes.js      2D形状の定義と3Dピース生成
+js/board.js       盤面ロジック(配置判定・ライン検出)
+js/audio.js       WebAudio シンセ効果音
+js/ranking.js     世界ランキング(Firebase REST)+端末内ランキング
+js/game.js        three.js シーン・操作・演出・ゲームフロー
+```

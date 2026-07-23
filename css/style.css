@@ -1,0 +1,362 @@
+/* ツミボシ — visual theme: 深宇宙のガラス標本箱 */
+
+:root {
+  --bg0: #03040c;
+  --bg1: #0e1434;
+  --bg2: #1b1040;
+  --ink: #eef1ff;
+  --sub: #8f97cc;
+  --faint: rgba(170, 185, 255, 0.14);
+  --aqua: #5fe8ff;
+  --gold: #ffc76a;
+  --rose: #ff7ab5;
+  --violet: #9f8cff;
+  --card: rgba(16, 20, 48, 0.55);
+  --jp: "Zen Kaku Gothic New", system-ui, sans-serif;
+  --disp: "Unbounded", "Zen Kaku Gothic New", sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body {
+  font-family: var(--jp);
+  color: var(--ink);
+  background:
+    radial-gradient(120% 90% at 50% 0%, var(--bg2) 0%, transparent 55%),
+    radial-gradient(140% 110% at 50% 110%, var(--bg1) 0%, var(--bg0) 60%);
+  background-color: var(--bg0);
+}
+
+#vignette {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(90% 70% at 50% 45%, transparent 55%, rgba(0, 0, 5, 0.55) 100%);
+}
+
+canvas#gl {
+  position: fixed; inset: 0; z-index: 2;
+  width: 100%; height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+/* ---- トレイ台座 (canvasより下層) ---- */
+#tray { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+
+.tray-card {
+  position: absolute;
+  border-radius: 22px;
+  background: linear-gradient(160deg, rgba(70, 84, 160, 0.22), rgba(20, 24, 58, 0.5));
+  border: 1px solid rgba(160, 178, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 10px 30px rgba(0, 0, 8, 0.45);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.tray-card.empty { opacity: 0.35; }
+.tray-card.cancel-hint {
+  border-color: rgba(255, 170, 190, 0.65);
+  box-shadow: 0 0 24px rgba(255, 120, 160, 0.25);
+}
+
+#trayLabel {
+  position: fixed;
+  z-index: 3;
+  pointer-events: none;
+  left: 0; right: 0;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--sub);
+  opacity: 0.8;
+}
+
+/* ---- HUD ---- */
+#hud {
+  position: fixed; z-index: 3;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 16px; right: 12px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  pointer-events: none;
+}
+
+#scoreLabel {
+  font-family: var(--disp);
+  font-size: 9px; letter-spacing: 0.5em;
+  color: var(--sub);
+}
+#score {
+  font-family: var(--disp);
+  font-weight: 900;
+  font-size: clamp(34px, 9vw, 46px);
+  line-height: 1.05;
+  background: linear-gradient(180deg, #fff, #aab6ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 28px rgba(120, 140, 255, 0.35);
+}
+#score.bump { animation: bump 0.3s ease-out; }
+@keyframes bump { 40% { transform: scale(1.12); } }
+
+#bestLine {
+  font-family: var(--disp);
+  font-size: 10px; letter-spacing: 0.24em;
+  color: var(--sub); margin-top: 4px;
+}
+#bestLine span { color: var(--gold); }
+
+#hudBtns { display: flex; gap: 8px; pointer-events: auto; }
+.iconbtn {
+  width: 40px; height: 40px;
+  border-radius: 13px;
+  border: 1px solid var(--faint);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--disp);
+  font-size: 15px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+.iconbtn:active { transform: scale(0.92); }
+.iconbtn.off { color: #565d8a; }
+
+/* ---- トースト / 加点ポップ ---- */
+#comboToast {
+  position: fixed; z-index: 4;
+  top: 24%; left: 50%;
+  transform: translate(-50%, 0) scale(0.8);
+  font-family: var(--jp);
+  font-weight: 900;
+  font-size: clamp(22px, 6.4vw, 34px);
+  letter-spacing: 0.14em;
+  color: #fff;
+  text-shadow: 0 0 22px rgba(140, 200, 255, 0.8), 0 2px 14px rgba(0, 0, 20, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+#comboToast.show { animation: toast 1.15s cubic-bezier(0.2, 1.4, 0.4, 1) forwards; }
+@keyframes toast {
+  0%   { opacity: 0; transform: translate(-50%, 14px) scale(0.7); }
+  18%  { opacity: 1; transform: translate(-50%, 0) scale(1.06); }
+  30%  { transform: translate(-50%, 0) scale(1); }
+  78%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -18px) scale(1); }
+}
+
+#popLayer { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+.pop {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--disp);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--gold);
+  text-shadow: 0 0 14px rgba(255, 200, 110, 0.75);
+  animation: popfly 0.95s ease-out forwards;
+}
+@keyframes popfly {
+  0%   { opacity: 0; transform: translate(-50%, -30%) scale(0.7); }
+  20%  { opacity: 1; transform: translate(-50%, -60%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -170%) scale(1); }
+}
+
+/* ---- オーバーレイ共通 ---- */
+.ov {
+  position: fixed; inset: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: center;
+  padding: 22px;
+  background: rgba(3, 4, 14, 0.66);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.32s ease;
+}
+.ov.show { opacity: 1; pointer-events: auto; }
+.ov-inner {
+  width: min(92vw, 380px);
+  max-height: calc(100dvh - 60px);
+  overflow-y: auto;
+  text-align: center;
+  transform: translateY(10px);
+  transition: transform 0.32s ease;
+}
+.ov.show .ov-inner { transform: none; }
+
+.panel {
+  background: linear-gradient(165deg, rgba(38, 46, 96, 0.5), rgba(12, 14, 36, 0.72));
+  border: 1px solid rgba(165, 180, 255, 0.18);
+  border-radius: 26px;
+  padding: 26px 22px calc(22px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 24px 70px rgba(0, 0, 10, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.panel-title {
+  font-size: 17px; font-weight: 900; letter-spacing: 0.3em;
+  margin-bottom: 18px;
+}
+
+/* ---- タイトル ---- */
+.titlecard { padding: 10px; }
+.logo-sub {
+  font-family: var(--disp);
+  font-size: 10px; letter-spacing: 0.62em;
+  color: var(--violet);
+  margin-bottom: 10px;
+}
+.logo {
+  font-family: var(--jp);
+  font-weight: 900;
+  font-size: clamp(52px, 16vw, 76px);
+  letter-spacing: 0.1em;
+  line-height: 1;
+  background: linear-gradient(175deg, #ffffff 10%, #b9c4ff 45%, #7f7bff 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 30px rgba(130, 130, 255, 0.4));
+}
+.tagline {
+  margin: 16px 0 30px;
+  font-size: 13px; line-height: 2;
+  color: var(--sub); letter-spacing: 0.1em;
+}
+.title-best {
+  margin-top: 22px;
+  font-size: 11px; letter-spacing: 0.24em; color: var(--sub);
+}
+.title-best b { font-family: var(--disp); color: var(--gold); margin-left: 6px; }
+
+/* ---- ボタン ---- */
+.btn {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 18px;
+  padding: 15px;
+  font-family: var(--jp);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+  color: var(--ink);
+  background: transparent;
+}
+.btn + .btn { margin-top: 10px; }
+.btn:active { transform: scale(0.97); }
+.btn.primary {
+  background: linear-gradient(160deg, #6d6bff, #3f3fd8);
+  box-shadow: 0 8px 30px rgba(90, 90, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.btn.primary.big { padding: 17px; font-size: 16px; }
+.btn.ghost {
+  border: 1px solid var(--faint);
+  color: var(--sub);
+  font-weight: 500;
+}
+.btn.small {
+  width: auto; padding: 11px 18px; font-size: 13px; border-radius: 14px;
+  background: linear-gradient(160deg, #6d6bff, #3f3fd8);
+}
+.ov-close { margin-top: 18px; }
+
+/* ---- 遊び方 ---- */
+.howto { list-style: none; text-align: left; }
+.howto li {
+  display: flex; gap: 13px; align-items: flex-start;
+  padding: 12px 2px;
+  font-size: 12.5px; line-height: 1.8; color: #c6cdf5;
+}
+.howto li + li { border-top: 1px solid rgba(160, 178, 255, 0.1); }
+.howto b { color: #fff; font-size: 13.5px; }
+.how-ic {
+  flex: 0 0 38px; height: 38px;
+  display: grid; place-items: center;
+  border-radius: 12px;
+  background: rgba(120, 130, 255, 0.14);
+  border: 1px solid rgba(160, 178, 255, 0.2);
+  font-size: 17px;
+  color: var(--aqua);
+}
+
+/* ---- ランキング ---- */
+.tabs {
+  display: flex; gap: 6px;
+  background: rgba(6, 8, 22, 0.6);
+  border-radius: 14px; padding: 4px;
+  margin-bottom: 14px;
+}
+.tab {
+  flex: 1; padding: 9px;
+  border: none; border-radius: 11px;
+  background: transparent;
+  color: var(--sub);
+  font-family: var(--jp); font-weight: 700; font-size: 12.5px; letter-spacing: 0.18em;
+  cursor: pointer;
+}
+.tab.active { background: rgba(120, 125, 255, 0.25); color: #fff; }
+
+.ranklist {
+  max-height: 44dvh; overflow-y: auto;
+  text-align: left;
+  border-radius: 14px;
+  background: rgba(5, 7, 20, 0.45);
+  padding: 6px 10px;
+}
+.rank-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 4px;
+  font-size: 13px;
+}
+.rank-row + .rank-row { border-top: 1px solid rgba(160, 178, 255, 0.08); }
+.rank-row .no {
+  flex: 0 0 30px;
+  font-family: var(--disp); font-size: 11px;
+  color: var(--sub); text-align: right;
+}
+.rank-row.top1 .no { color: var(--gold); }
+.rank-row.top2 .no { color: #cfd8ff; }
+.rank-row.top3 .no { color: #e8a87c; }
+.rank-row.me { background: rgba(120, 125, 255, 0.14); border-radius: 8px; }
+.rank-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-row .sc { font-family: var(--disp); font-size: 12px; color: #dfe5ff; }
+.rank-note {
+  padding: 26px 10px;
+  font-size: 12px; line-height: 2; color: var(--sub); text-align: center;
+}
+
+/* ---- ゲームオーバー ---- */
+.over-sub { font-size: 13px; letter-spacing: 0.4em; color: var(--sub); margin-bottom: 8px; }
+.over-score {
+  font-family: var(--disp); font-weight: 900;
+  font-size: clamp(46px, 15vw, 66px);
+  background: linear-gradient(180deg, #fff, #9fb0ff);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.over-best {
+  min-height: 22px;
+  margin: 6px 0 14px;
+  font-size: 12px; letter-spacing: 0.2em; color: var(--gold); font-weight: 700;
+}
+.namebox { display: flex; gap: 8px; margin-bottom: 6px; }
+.namebox input {
+  flex: 1; min-width: 0;
+  border-radius: 14px;
+  border: 1px solid var(--faint);
+  background: rgba(5, 7, 20, 0.6);
+  color: var(--ink);
+  font-family: var(--jp); font-size: 14px;
+  padding: 11px 14px;
+  outline: none;
+}
+.namebox input:focus { border-color: rgba(150, 160, 255, 0.5); }
+.submit-result { min-height: 30px; padding: 6px 0 10px; font-size: 12px; color: var(--aqua); letter-spacing: 0.1em; }
