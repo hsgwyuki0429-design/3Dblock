@@ -1,7 +1,8 @@
-# ツミボシ — 3D Block Blast
+# 3Dblocks
 
-星のかけらを立方体グリッドに積み、タテ・ヨコ・奥行きのどれかで1列そろえると
-流れ星になって消える 3D パズルゲーム。スマホのブラウザ向け(three.js 使用)。
+立方体グリッドにブロックを積み、タテ・ヨコ・奥行きのどれかで1列そろえると
+爆発して消える 3D パズルゲーム。スマホのブラウザ向け(three.js 使用)。
+キャンディ・アーケード調の高刺激・高彩度ビジュアル。
 
 ## 遊び方
 
@@ -40,7 +41,7 @@ GitHub Pages なら: リポジトリの Settings → Pages → Branch にこの�
    ```json
    {
      "rules": {
-       "tsumiboshi": {
+       "blocks3d": {
          "v1": {
            ".read": true,
            ".indexOn": ["s"],
@@ -62,7 +63,7 @@ GitHub Pages なら: リポジトリの Settings → Pages → Branch にこの�
    ```js
    export const RANKING = {
      endpoint: "https://xxxx-default-rtdb.asia-southeast1.firebasedatabase.app",
-     path: "tsumiboshi/v1",
+     path: "blocks3d/v1",
      limit: 100,
    };
    ```

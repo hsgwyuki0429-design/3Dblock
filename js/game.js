@@ -60,7 +60,7 @@ let trayTopY = Infinity;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.2;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.autoClear = false;
@@ -72,8 +72,8 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.05).texture;
 scene.environment = envTex;
 
-scene.add(new THREE.AmbientLight(0x8890c0, 0.5));
-const keyLight = new THREE.DirectionalLight(0xfff4e0, 2.2);
+scene.add(new THREE.AmbientLight(0xffffff, 0.62));
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
 keyLight.position.set(6, 12, 4);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(1024, 1024);
@@ -82,9 +82,13 @@ keyLight.shadow.camera.right = keyLight.shadow.camera.top = N * 1.6;
 keyLight.shadow.camera.far = 40;
 keyLight.shadow.bias = -0.002;
 scene.add(keyLight);
-const rimLight = new THREE.DirectionalLight(0x7a6cff, 1.1);
-rimLight.position.set(-7, 5, -6);
-scene.add(rimLight);
+// ネオンのリムライト2灯 (シアン & マゼンタ) でキャンディをギラつかせる
+const rimCyan = new THREE.DirectionalLight(0x18e0ff, 1.4);
+rimCyan.position.set(-8, 4, -6);
+scene.add(rimCyan);
+const rimPink = new THREE.DirectionalLight(0xff2e88, 1.2);
+rimPink.position.set(7, 2, -7);
+scene.add(rimPink);
 
 const blocksGroup = new THREE.Group();
 const fxGroup = new THREE.Group();
@@ -100,10 +104,10 @@ function makeBlockMaterial(plane) {
   return new THREE.MeshStandardMaterial({
     color: c.base,
     emissive: c.emissive,
-    emissiveIntensity: 0.55,
-    roughness: 0.26,
-    metalness: 0.15,
-    envMapIntensity: 0.9,
+    emissiveIntensity: 0.85,
+    roughness: 0.16,
+    metalness: 0.0,
+    envMapIntensity: 1.2,
   });
 }
 
@@ -117,7 +121,7 @@ function makeCube(plane) {
     new THREE.LineBasicMaterial({
       color: PLANE_COLORS[plane].edge,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.7,
     })
   );
   mesh.add(edges);
@@ -167,7 +171,7 @@ let floorPlate;
   // 床プレート
   const plateGeo = new THREE.BoxGeometry(N + 0.7, 0.18, N + 0.7);
   const plateMat = new THREE.MeshStandardMaterial({
-    color: 0x0d1230, roughness: 0.85, metalness: 0.2, envMapIntensity: 0.4,
+    color: 0x1c0b48, roughness: 0.42, metalness: 0.5, envMapIntensity: 0.9,
   });
   floorPlate = new THREE.Mesh(plateGeo, plateMat);
   floorPlate.position.y = -0.09;
@@ -184,14 +188,14 @@ let floorPlate;
   gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
   scene.add(new THREE.LineSegments(
     gridGeo,
-    new THREE.LineBasicMaterial({ color: 0x4a5aa8, transparent: true, opacity: 0.4 })
+    new THREE.LineBasicMaterial({ color: 0x8b5bff, transparent: true, opacity: 0.55 })
   ));
 
   // 外枠ケージ
   const s = N / 2;
   const cage = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(N, N, N)),
-    new THREE.LineBasicMaterial({ color: 0x5a68c0, transparent: true, opacity: 0.4 })
+    new THREE.LineBasicMaterial({ color: 0xa878ff, transparent: true, opacity: 0.55 })
   );
   cage.position.y = s;
   scene.add(cage);
@@ -207,7 +211,7 @@ let floorPlate;
   scene.add(new THREE.Points(
     dotGeo,
     new THREE.PointsMaterial({
-      color: 0x8a97e8, size: 0.045, transparent: true, opacity: 0.5,
+      color: 0xffffff, size: 0.05, transparent: true, opacity: 0.6,
     })
   ));
 
@@ -216,8 +220,8 @@ let floorPlate;
   glowCanvas.width = glowCanvas.height = 256;
   const gctx = glowCanvas.getContext("2d");
   const grad = gctx.createRadialGradient(128, 128, 8, 128, 128, 128);
-  grad.addColorStop(0, "rgba(110,110,255,0.55)");
-  grad.addColorStop(0.55, "rgba(70,70,200,0.16)");
+  grad.addColorStop(0, "rgba(190,90,255,0.6)");
+  grad.addColorStop(0.5, "rgba(255,60,150,0.2)");
   grad.addColorStop(1, "rgba(0,0,0,0)");
   gctx.fillStyle = grad;
   gctx.fillRect(0, 0, 256, 256);
@@ -544,9 +548,10 @@ function doClear(lines, nearCell) {
 
   // 演出
   const toastText =
-    lines.length >= 3 ? "星降り!!!" :
-    lines.length === 2 ? "二連流星!!" : "流星!";
-  showToast(combo > 1 ? `${toastText} ×${combo}連` : toastText);
+    lines.length >= 4 ? "ULTRA!!!!" :
+    lines.length === 3 ? "TRIPLE!!!" :
+    lines.length === 2 ? "DOUBLE!!" : "CLEAR!";
+  showToast(combo > 1 ? `${toastText}  ×${combo} COMBO` : toastText);
   spawnScorePop(pts, nearCell);
   sfx.clear(lines.length);
   if (navigator.vibrate) navigator.vibrate(lines.length > 1 ? [24, 40, 24] : 18);
@@ -601,14 +606,17 @@ const sparkTex = (() => {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
   const g = c.getContext("2d");
-  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
+  const grad = g.createRadialGradient(32, 32, 1, 32, 32, 32);
   grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.3, "rgba(255,236,180,0.9)");
-  grad.addColorStop(1, "rgba(255,200,90,0)");
+  grad.addColorStop(0.35, "rgba(255,255,255,0.85)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
   g.fillStyle = grad;
   g.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c);
 })();
+
+// バーストのキャンディ配色
+const BURST_COLORS = [0x18e0ff, 0xffc300, 0xff2e88, 0xb6ff2d, 0xffffff, 0x8b5bff];
 
 function spawnBurst(cells) {
   const count = cells.length * 10;
@@ -628,7 +636,9 @@ function spawnBurst(cells) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   const mat = new THREE.PointsMaterial({
-    map: sparkTex, color: 0xffe9b0, size: 0.42, transparent: true, opacity: 1,
+    map: sparkTex,
+    color: BURST_COLORS[Math.floor(Math.random() * BURST_COLORS.length)],
+    size: 0.5, transparent: true, opacity: 1,
     blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
   });
   const points = new THREE.Points(geo, mat);
@@ -706,6 +716,7 @@ function startGame() {
   refillHand();
   hideOverlay("ovTitle");
   hideOverlay("ovOver");
+  document.body.classList.add("playing");
   state = "play";
 }
 
@@ -718,9 +729,10 @@ function checkGameOver() {
 }
 
 function showGameOver() {
+  document.body.classList.remove("playing");
   sfx.over();
   $("overScore").textContent = score;
-  $("overBestNote").textContent = score >= best && score > 0 ? "✦ ベスト更新!" : "";
+  $("overBestNote").textContent = score >= best && score > 0 ? "🎉 NEW BEST!" : "";
   $("submitResult").textContent = "";
   $("btnSubmit").disabled = false;
   $("btnSubmit").style.opacity = 1;
@@ -810,12 +822,17 @@ async function submitScore() {
 }
 
 function defaultName() {
-  return "ホシ" + String(1000 + Math.floor(Math.random() * 9000));
+  return "Player" + String(1000 + Math.floor(Math.random() * 9000));
 }
 
 // ---------------------------------------------------------------- オーバーレイ
 
-function showOverlay(id) { $(id).classList.add("show"); }
+let ovTopZ = 10;
+function showOverlay(id) {
+  const el = $(id);
+  el.style.zIndex = ++ovTopZ;   // 常に最前面へ (ゲームオーバー→ランキング等の重なり対策)
+  el.classList.add("show");
+}
 function hideOverlay(id) { $(id).classList.remove("show"); }
 
 // ---------------------------------------------------------------- 入力
@@ -906,15 +923,16 @@ document.querySelectorAll(".ov-close").forEach((btn) => {
 });
 
 {
-  const mutedInit = store.get("muted", "0") === "1";
-  setMuted(mutedInit);
-  $("btnMute").classList.toggle("off", mutedInit);
+  const setMuteIcon = (m) => { $("btnMute").textContent = m ? "🔇" : "🔊"; };
+  let mutedNow = store.get("muted", "0") === "1";
+  setMuted(mutedNow);
+  setMuteIcon(mutedNow);
   $("btnMute").addEventListener("click", () => {
-    const m = !$("btnMute").classList.contains("off");
-    $("btnMute").classList.toggle("off", m);
-    setMuted(m);
-    store.set("muted", m ? "1" : "0");
-    if (!m) sfx.ui();
+    mutedNow = !mutedNow;
+    setMuteIcon(mutedNow);
+    setMuted(mutedNow);
+    store.set("muted", mutedNow ? "1" : "0");
+    if (!mutedNow) sfx.ui();
   });
 }
 

@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#05060f">
-<title>ツミボシ — 星を積む3Dパズル</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#1c0a54">
+<title>3Dblocks — 積んで、そろえて、ぶっ飛ばす</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%A7%8A%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Unbounded:wght@500;700;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 <script type="importmap">
 {
@@ -29,7 +29,7 @@
   <div class="tray-card" data-slot="1"></div>
   <div class="tray-card" data-slot="2"></div>
 </div>
-<div id="trayLabel">ほしのかけら — ドラッグして配置</div>
+<div id="trayLabel">DRAG &amp; DROP — 積んでライン消し</div>
 
 <canvas id="gl"></canvas>
 
@@ -41,9 +41,9 @@
     <div id="bestLine">BEST <span id="best">0</span></div>
   </div>
   <nav id="hudBtns">
-    <button id="btnRank"  class="iconbtn" aria-label="ランキング">✦</button>
-    <button id="btnHelp"  class="iconbtn" aria-label="遊び方">?</button>
-    <button id="btnMute"  class="iconbtn" aria-label="サウンド">♪</button>
+    <button id="btnRank"  class="iconbtn" aria-label="ランキング">🏆</button>
+    <button id="btnHelp"  class="iconbtn" aria-label="遊び方">❔</button>
+    <button id="btnMute"  class="iconbtn" aria-label="サウンド">🔊</button>
   </nav>
 </header>
 
@@ -53,12 +53,12 @@
 <!-- タイトル -->
 <div class="ov show" id="ovTitle">
   <div class="ov-inner titlecard">
-    <div class="logo-sub">STACK&nbsp;THE&nbsp;STARS</div>
-    <h1 class="logo">ツミボシ</h1>
-    <p class="tagline">星のかけらを立方体に積んで、<br>1列そろえて夜空に流す。</p>
-    <button id="btnStart" class="btn primary big">はじめる</button>
+    <div class="logo-sub">STACK · MATCH · BLAST</div>
+    <h1 class="logo">3Dblocks</h1>
+    <p class="tagline">立方体にブロックを積んで、<br>1列そろえて一気にぶっ飛ばす。</p>
+    <button id="btnStart" class="btn primary big">▶ プレイ</button>
     <button id="btnHowTitle" class="btn ghost">遊び方をみる</button>
-    <div class="title-best">ベスト <b id="titleBest">0</b></div>
+    <div class="title-best">BEST <b id="titleBest">0</b></div>
   </div>
 </div>
 
@@ -67,10 +67,10 @@
   <div class="ov-inner panel">
     <h2 class="panel-title">遊び方</h2>
     <ul class="howto">
-      <li><span class="how-ic">↻</span><div><b>視点をまわす</b><br>なにも持っていないとき、1本指ドラッグで回転。2本指ピンチでズーム。</div></li>
-      <li><span class="how-ic">✦</span><div><b>かけらを置く</b><br>下のかけらをドラッグ。置ける場所に近づくと光って仮置きされ、指を離すと確定。トレイまで指を戻せばキャンセル。</div></li>
-      <li><span class="how-ic">☄</span><div><b>1列そろえて流す</b><br>タテ・ヨコ・奥行き、どの向きでも1列そろうと流れ星になって消える。同時に消すほど高得点。</div></li>
-      <li><span class="how-ic">◇</span><div><b>置ける場所</b><br>かけらは「床」か「すでに積まれた星」に接する場所にだけ置ける。3つとも置けなくなったら、その夜は終わり。</div></li>
+      <li><span class="how-ic c1">↻</span><div><b>視点をまわす</b><br>なにも持っていないとき、1本指ドラッグで回転。2本指ピンチでズーム。</div></li>
+      <li><span class="how-ic c2">✋</span><div><b>ブロックを置く</b><br>下のブロックをドラッグ。置ける場所に近づくと光って仮置きされ、指を離すと確定。トレイまで指を戻せばキャンセル。</div></li>
+      <li><span class="how-ic c3">💥</span><div><b>1列そろえてブラスト</b><br>タテ・ヨコ・奥行き、どの向きでも1列そろうと爆発して消える。同時に消すほど高得点&コンボ!</div></li>
+      <li><span class="how-ic c4">🎯</span><div><b>置ける場所</b><br>ブロックは「床」か「すでに置いたブロック」に接する場所だけ。3つとも置けなくなったらゲームオーバー。</div></li>
     </ul>
     <button class="btn primary ov-close" data-close="ovHelp">とじる</button>
   </div>
@@ -92,7 +92,7 @@
 <!-- ゲームオーバー -->
 <div class="ov" id="ovOver">
   <div class="ov-inner panel over">
-    <div class="over-sub">今夜はここまで</div>
+    <div class="over-sub">GAME OVER</div>
     <div class="over-score" id="overScore">0</div>
     <div class="over-best" id="overBestNote"></div>
     <div class="namebox">

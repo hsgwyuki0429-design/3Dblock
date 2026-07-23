@@ -8,16 +8,17 @@ export const GRID_N = 4;
 // 未設定 ("") のままなら「この端末のランキング」のみで動作する。
 // セットアップ手順は README.md を参照。
 export const RANKING = {
-  endpoint: "",             // 例: "https://tsumiboshi-xxxx-default-rtdb.asia-southeast1.firebasedatabase.app"
-  path: "tsumiboshi/v1",    // データベース内の保存先
+  endpoint: "",             // 例: "https://blocks3d-xxxx-default-rtdb.asia-southeast1.firebasedatabase.app"
+  path: "blocks3d/v1",      // データベース内の保存先
   limit: 100,               // 取得する上位件数
 };
 
 // 面の向きごとの色 (XZ=水平 / XY=正面 / YZ=側面)
+// キャンディ・ネオン: 高彩度で最大限にポップに、白エッジで輪郭を立てる
 export const PLANE_COLORS = {
-  XZ: { base: 0xf5b44e, emissive: 0x6b3f08, edge: 0xffe0a8 },
-  XY: { base: 0x46d4f2, emissive: 0x073f52, edge: 0xbdf3ff },
-  YZ: { base: 0xf2699f, emissive: 0x55123a, edge: 0xffc4dd },
+  XZ: { base: 0xffc300, emissive: 0xff7a00, edge: 0xfff6c0 },  // ゴールド
+  XY: { base: 0x18e0ff, emissive: 0x00a2d6, edge: 0xffffff },  // エレクトリックシアン
+  YZ: { base: 0xff2e88, emissive: 0xd6006a, edge: 0xffd9ec },  // ホットマゼンタ
 };
 
 // スコア
@@ -28,4 +29,4 @@ export const SCORE = {
   comboBonus: 25,       // 連続クリア1回ごとの追加ボーナス
 };
 
-export const STORAGE_PREFIX = "tsumiboshi.";
+export const STORAGE_PREFIX = "blocks3d.";
