@@ -5,7 +5,36 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f5f5f7">
 <title>3Dblocks — 積んで、そろえる立体パズル</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%230071e3'/%3E%3C/svg%3E">
+
+<!-- アプリ内ブラウザ(LINE等)なら外部ブラウザへ脱出。できる限り早く実行する -->
+<script>
+(function () {
+  try {
+    var ua = navigator.userAgent || "";
+    var isLine = /\bLine\//i.test(ua);
+    var inApp = /(FBAN|FBAV|FB_IAB|Instagram|\bLine\/|MicroMessenger|KAKAOTALK|Twitter|; wv\))/i.test(ua);
+    if (!inApp) return;
+    var url = new URL(location.href);
+    if (isLine && !url.searchParams.has("openExternalBrowser")) {
+      url.searchParams.set("openExternalBrowser", "1");   // LINE公式: 外部ブラウザで開く
+      location.replace(url.toString());
+      return;
+    }
+    window.__inAppBrowser = true;   // 抜けられなかった → 後で案内オーバーレイを出す
+  } catch (e) {}
+})();
+</script>
+
+<!-- PWA / ホーム画面追加 / 全画面 -->
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="3Dblocks">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -119,6 +148,72 @@
     <button id="btnOverRank" class="btn ghost">ランキングをみる</button>
   </div>
 </div>
+
+<!-- アプリ内ブラウザ向け 案内オーバーレイ -->
+<div class="ov" id="ovBrowser">
+  <div class="ov-inner panel">
+    <div class="ob-badge">
+      <img src="icons/icon-192.png" alt="3Dblocks" width="72" height="72">
+    </div>
+    <h2 class="panel-title">ブラウザで開こう</h2>
+    <p class="ob-text">アプリ内ブラウザでは全画面やホーム画面追加ができません。<br>Safari / Chrome で開くと快適に遊べます。</p>
+    <button id="btnOpenExternal" class="btn primary big">ブラウザで開く</button>
+    <button id="btnCopyUrl" class="btn ghost">URLをコピー</button>
+    <p class="ob-hint" id="obHint"></p>
+    <button id="btnDismissBrowser" class="ob-dismiss">このまま続ける</button>
+  </div>
+</div>
+
+<script>
+// サービスワーカー登録(ホーム画面追加/オフライン)
+if ("serviceWorker" in navigator) {
+  addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  });
+}
+
+// アプリ内ブラウザ検出時の案内
+(function () {
+  if (!window.__inAppBrowser) return;
+  var ov = document.getElementById("ovBrowser");
+  var hint = document.getElementById("obHint");
+  var ua = navigator.userAgent || "";
+  var isAndroid = /Android/i.test(ua);
+
+  function copyUrl() {
+    var u = location.href;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(u).catch(function () { legacyCopy(u); });
+    } else { legacyCopy(u); }
+  }
+  function legacyCopy(u) {
+    var t = document.createElement("textarea");
+    t.value = u; t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    t.remove();
+  }
+
+  document.getElementById("btnOpenExternal").addEventListener("click", function () {
+    if (isAndroid) {
+      var noScheme = location.href.replace(/^https?:\/\//, "");
+      location.href = "intent://" + noScheme + "#Intent;scheme=https;package=com.android.chrome;end";
+      hint.textContent = "開かないときは下の「URLをコピー」でブラウザに貼り付けてください。";
+    } else {
+      copyUrl();
+      hint.textContent = "URLをコピーしました。右上/下の「…」や共有ボタン →「Safariで開く」に貼り付けてください。";
+    }
+  });
+  document.getElementById("btnCopyUrl").addEventListener("click", function () {
+    copyUrl();
+    hint.textContent = "URLをコピーしました。ブラウザ(Safari/Chrome)に貼り付けて開いてください。";
+  });
+  document.getElementById("btnDismissBrowser").addEventListener("click", function () {
+    ov.classList.remove("show");
+  });
+  ov.classList.add("show");
+})();
+</script>
 
 <script type="module" src="js/main.js"></script>
 </body>

@@ -277,6 +277,18 @@ body:not(.playing) #hudBtns { pointer-events: none; }
   color: var(--accent); margin-bottom: 2px;
 }
 
+/* アプリ内ブラウザ案内オーバーレイ */
+#ovBrowser { z-index: 60; }
+.ob-badge { margin: 4px 0 14px; }
+.ob-badge img { border-radius: 18px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); }
+.ob-text { font-size: 14px; line-height: 1.7; color: var(--sub); margin-bottom: 22px; }
+.ob-hint { min-height: 20px; margin-top: 12px; font-size: 12px; line-height: 1.6; color: var(--accent); }
+.ob-dismiss {
+  margin-top: 8px; border: none; background: transparent;
+  color: var(--sub); font-family: var(--font); font-size: 13px; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+
 .btn.ghost {
   color: var(--accent);
   font-weight: 500;
