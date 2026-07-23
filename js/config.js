@@ -8,7 +8,7 @@ export const GRID_N = 4;
 // 未設定 ("") のままなら「この端末のランキング」のみで動作する。
 // セットアップ手順は README.md を参照。
 export const RANKING = {
-  endpoint: "",             // 例: "https://blocks3d-xxxx-default-rtdb.asia-southeast1.firebasedatabase.app"
+  endpoint: "https://dblock-9f767-default-rtdb.firebaseio.com/",           //例: "https://blocks3d-xxxx-default-rtdb.asia-southeast1.firebasedatabase.app"
   path: "blocks3d/v1",      // データベース内の保存先
   limit: 100,               // 取得する上位件数
 };
