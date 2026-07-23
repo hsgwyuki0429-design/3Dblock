@@ -14,11 +14,11 @@ export const RANKING = {
 };
 
 // 面の向きごとの色 (XZ=水平 / XY=正面 / YZ=側面)
-// キャンディ・ネオン: 高彩度で最大限にポップに、白エッジで輪郭を立てる
+// シングルブルー基調: 同系統ブルーの明度差だけで向きを示す (一色を基調とするミニマル)
 export const PLANE_COLORS = {
-  XZ: { base: 0xffc300, emissive: 0xff7a00, edge: 0xfff6c0 },  // ゴールド
-  XY: { base: 0x18e0ff, emissive: 0x00a2d6, edge: 0xffffff },  // エレクトリックシアン
-  YZ: { base: 0xff2e88, emissive: 0xd6006a, edge: 0xffd9ec },  // ホットマゼンタ
+  XZ: { base: 0x0a84ff, emissive: 0x0a84ff, edge: 0x0a3d78 },  // ブルー(標準)
+  XY: { base: 0x3ba3ff, emissive: 0x3ba3ff, edge: 0x125088 },  // ブルー(明)
+  YZ: { base: 0x0060d6, emissive: 0x0060d6, edge: 0x08305e },  // ブルー(濃)
 };
 
 // スコア

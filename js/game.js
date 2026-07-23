@@ -3,6 +3,7 @@
 
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { GRID_N as N, PLANE_COLORS, SCORE, STORAGE_PREFIX } from "./config.js";
 import { generatePiece } from "./shapes.js";
 import { Board } from "./board.js";
@@ -60,7 +61,7 @@ let trayTopY = Infinity;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
+renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.autoClear = false;
@@ -72,23 +73,22 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.05).texture;
 scene.environment = envTex;
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.62));
-const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
-keyLight.position.set(6, 12, 4);
+// 柔らかいスタジオライティング (Apple製品ショット風)
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
+keyLight.position.set(5, 12, 6);
 keyLight.castShadow = true;
-keyLight.shadow.mapSize.set(1024, 1024);
+keyLight.shadow.mapSize.set(2048, 2048);
 keyLight.shadow.camera.left = keyLight.shadow.camera.bottom = -N * 1.6;
 keyLight.shadow.camera.right = keyLight.shadow.camera.top = N * 1.6;
 keyLight.shadow.camera.far = 40;
-keyLight.shadow.bias = -0.002;
+keyLight.shadow.bias = -0.0015;
+keyLight.shadow.radius = 4;
 scene.add(keyLight);
-// ネオンのリムライト2灯 (シアン & マゼンタ) でキャンディをギラつかせる
-const rimCyan = new THREE.DirectionalLight(0x18e0ff, 1.4);
-rimCyan.position.set(-8, 4, -6);
-scene.add(rimCyan);
-const rimPink = new THREE.DirectionalLight(0xff2e88, 1.2);
-rimPink.position.set(7, 2, -7);
-scene.add(rimPink);
+// 反対側からの控えめなフィルライト (影を柔らかく持ち上げる)
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
+fillLight.position.set(-7, 5, -4);
+scene.add(fillLight);
 
 const blocksGroup = new THREE.Group();
 const fxGroup = new THREE.Group();
@@ -96,35 +96,30 @@ scene.add(blocksGroup, fxGroup);
 
 // ---------------------------------------------------------------- 素材
 
-const cubeGeo = new THREE.BoxGeometry(CUBE, CUBE, CUBE);
-const cubeEdgeGeo = new THREE.EdgesGeometry(cubeGeo);
+// 角丸キューブ (アプリアイコンのような柔らかいプラスチック)
+const cubeGeo = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 4, 0.1);
+const cubeEdgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(CUBE, CUBE, CUBE));
+
+const BASE_EMISSIVE = 0.14;   // 基本はほぼマット、向きの明度差だけ薄く自己発光
+const CLEAR_EMISSIVE = 0.7;   // 消去予告のときだけ軽く持ち上げる
 
 function makeBlockMaterial(plane) {
   const c = PLANE_COLORS[plane];
   return new THREE.MeshStandardMaterial({
     color: c.base,
     emissive: c.emissive,
-    emissiveIntensity: 0.85,
-    roughness: 0.16,
+    emissiveIntensity: BASE_EMISSIVE,
+    roughness: 0.42,
     metalness: 0.0,
-    envMapIntensity: 1.2,
+    envMapIntensity: 0.75,
   });
 }
 
-/** 1ブロック (立方体+発光エッジ) */
+/** 1ブロック。角丸の隙間と柔らかい影で隣接キューブが分かれるのでワイヤーは付けない */
 function makeCube(plane) {
   const mesh = new THREE.Mesh(cubeGeo, makeBlockMaterial(plane));
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  const edges = new THREE.LineSegments(
-    cubeEdgeGeo,
-    new THREE.LineBasicMaterial({
-      color: PLANE_COLORS[plane].edge,
-      transparent: true,
-      opacity: 0.7,
-    })
-  );
-  mesh.add(edges);
   return mesh;
 }
 
@@ -137,12 +132,12 @@ function makePieceGroup(piece, ghost = false) {
       m = new THREE.Mesh(
         cubeGeo,
         new THREE.MeshBasicMaterial({
-          color: 0xcfe2ff, transparent: true, opacity: 0.22, depthWrite: false,
+          color: 0x0a84ff, transparent: true, opacity: 0.18, depthWrite: false,
         })
       );
       const e = new THREE.LineSegments(
         cubeEdgeGeo,
-        new THREE.LineBasicMaterial({ color: 0xdfe9ff, transparent: true, opacity: 0.8 })
+        new THREE.LineBasicMaterial({ color: 0x0a84ff, transparent: true, opacity: 0.7 })
       );
       m.add(e);
     } else {
@@ -168,17 +163,17 @@ function cellWorld(x, y, z, out = new THREE.Vector3()) {
 
 let floorPlate;
 {
-  // 床プレート
-  const plateGeo = new THREE.BoxGeometry(N + 0.7, 0.18, N + 0.7);
+  // 床プレート (マットな明るいグレー、柔らかい接地影を受ける)
+  const plateGeo = new RoundedBoxGeometry(N + 0.7, 0.2, N + 0.7, 4, 0.08);
   const plateMat = new THREE.MeshStandardMaterial({
-    color: 0x1c0b48, roughness: 0.42, metalness: 0.5, envMapIntensity: 0.9,
+    color: 0xf0f0f3, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.3,
   });
   floorPlate = new THREE.Mesh(plateGeo, plateMat);
-  floorPlate.position.y = -0.09;
+  floorPlate.position.y = -0.1;
   floorPlate.receiveShadow = true;
   scene.add(floorPlate);
 
-  // 床グリッド線
+  // 床グリッド線 (薄いヘアライン)
   const pts = [];
   for (let i = 0; i <= N; i++) {
     pts.push(i - OFF - 0.5, 0.005, -OFF - 0.5, i - OFF - 0.5, 0.005, N - OFF - 0.5);
@@ -188,80 +183,17 @@ let floorPlate;
   gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
   scene.add(new THREE.LineSegments(
     gridGeo,
-    new THREE.LineBasicMaterial({ color: 0x8b5bff, transparent: true, opacity: 0.55 })
+    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.9 })
   ));
 
-  // 外枠ケージ
+  // 外枠ケージ (立体の範囲を示す極薄ライン)
   const s = N / 2;
   const cage = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(N, N, N)),
-    new THREE.LineBasicMaterial({ color: 0xa878ff, transparent: true, opacity: 0.55 })
+    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.5 })
   );
   cage.position.y = s;
   scene.add(cage);
-
-  // 格子の頂点に小さな光点
-  const dotPts = [];
-  for (let x = 0; x <= N; x++)
-    for (let y = 0; y <= N; y++)
-      for (let z = 0; z <= N; z++)
-        dotPts.push(x - OFF - 0.5, y, z - OFF - 0.5);
-  const dotGeo = new THREE.BufferGeometry();
-  dotGeo.setAttribute("position", new THREE.Float32BufferAttribute(dotPts, 3));
-  scene.add(new THREE.Points(
-    dotGeo,
-    new THREE.PointsMaterial({
-      color: 0xffffff, size: 0.05, transparent: true, opacity: 0.6,
-    })
-  ));
-
-  // 床下のグロー
-  const glowCanvas = document.createElement("canvas");
-  glowCanvas.width = glowCanvas.height = 256;
-  const gctx = glowCanvas.getContext("2d");
-  const grad = gctx.createRadialGradient(128, 128, 8, 128, 128, 128);
-  grad.addColorStop(0, "rgba(190,90,255,0.6)");
-  grad.addColorStop(0.5, "rgba(255,60,150,0.2)");
-  grad.addColorStop(1, "rgba(0,0,0,0)");
-  gctx.fillStyle = grad;
-  gctx.fillRect(0, 0, 256, 256);
-  const glowTex = new THREE.CanvasTexture(glowCanvas);
-  const glow = new THREE.Mesh(
-    new THREE.PlaneGeometry(N * 3.1, N * 3.1),
-    new THREE.MeshBasicMaterial({
-      map: glowTex, transparent: true, depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-  );
-  glow.rotation.x = -Math.PI / 2;
-  glow.position.y = -0.22;
-  scene.add(glow);
-}
-
-// 星空 (2層でゆっくり逆回転)
-const starLayers = [];
-for (let layer = 0; layer < 2; layer++) {
-  const count = 260;
-  const pos = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    const r = 34 + Math.random() * 55;
-    const th = Math.random() * Math.PI * 2;
-    const ph = Math.acos(2 * Math.random() - 1);
-    pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
-    pos[i * 3 + 1] = r * Math.cos(ph) * 0.7 + 6;
-    pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  const stars = new THREE.Points(geo, new THREE.PointsMaterial({
-    color: layer ? 0x9fb4ff : 0xffffff,
-    size: layer ? 0.32 : 0.2,
-    transparent: true,
-    opacity: layer ? 0.5 : 0.8,
-    sizeAttenuation: true,
-  }));
-  scene.add(stars);
-  starLayers.push(stars);
 }
 
 // ---------------------------------------------------------------- 盤面メッシュ管理
@@ -300,8 +232,8 @@ const trayCam = new THREE.OrthographicCamera(-TRAY_HALF, TRAY_HALF, TRAY_HALF, -
 for (let i = 0; i < 3; i++) {
   const s = new THREE.Scene();
   s.environment = envTex;
-  const amb = new THREE.AmbientLight(0x9aa2d8, 0.7);
-  const dir = new THREE.DirectionalLight(0xfff4e0, 1.6);
+  const amb = new THREE.AmbientLight(0xffffff, 0.9);
+  const dir = new THREE.DirectionalLight(0xffffff, 1.4);
   dir.position.set(4, 8, 3);
   s.add(amb, dir);
   trayScenes.push({ scene: s, group: null });
@@ -470,7 +402,7 @@ function setSnap(p) {
   const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
   if (same(held.snapped, p)) return;
   // 消去予告のハイライトを戻す
-  for (const m of held.litMeshes) m.material.emissiveIntensity = 0.55;
+  for (const m of held.litMeshes) m.material.emissiveIntensity = BASE_EMISSIVE;
   held.litMeshes = [];
   held.snapped = p;
   if (!p) { held.ghost.visible = false; return; }
@@ -479,15 +411,12 @@ function setSnap(p) {
   cellWorld(p[0], p[1], p[2], held.ghost.position);
   held.wouldClear = board.linesIfPlaced(held.piece.cells, p[0], p[1], p[2]);
   const clearing = held.wouldClear.length > 0;
-  held.ghost.traverse((o) => {
-    if (o.isMesh) o.material.color.set(clearing ? 0xffd98a : 0xcfe2ff);
-    else if (o.isLineSegments) o.material.color.set(clearing ? 0xffe9b8 : 0xdfe9ff);
-  });
+  held.clearing = clearing;   // tick 側で仮ピースの点滅を強める
   if (clearing) {
     for (const line of held.wouldClear) {
       for (const [x, y, z] of line.cells) {
         const m = blockMeshes.get(board.idx(x, y, z));
-        if (m) { m.material.emissiveIntensity = 1.6; held.litMeshes.push(m); }
+        if (m) { m.material.emissiveIntensity = CLEAR_EMISSIVE; held.litMeshes.push(m); }
       }
     }
     if (navigator.vibrate) navigator.vibrate(8);
@@ -499,7 +428,7 @@ function drop() {
   const h = held;
   held = null;
   trayCards[h.slot].classList.remove("cancel-hint");
-  for (const m of h.litMeshes) m.material.emissiveIntensity = 0.55;
+  for (const m of h.litMeshes) m.material.emissiveIntensity = BASE_EMISSIVE;
   scene.remove(h.group, h.ghost);
   disposeGroup(h.group);
   disposeGroup(h.ghost);
@@ -546,52 +475,43 @@ function doClear(lines, nearCell) {
     (combo > 1 ? SCORE.comboBonus * combo : 0);
   addScore(pts);
 
-  // 演出
-  const toastText =
-    lines.length >= 4 ? "ULTRA!!!!" :
-    lines.length === 3 ? "TRIPLE!!!" :
-    lines.length === 2 ? "DOUBLE!!" : "CLEAR!";
-  showToast(combo > 1 ? `${toastText}  ×${combo} COMBO` : toastText);
+  // 演出 (控えめ・ミニマル)
+  const toastText = `${Math.min(lines.length, 4)}列そろえた`;
+  showToast(combo > 1 ? `${toastText} · コンボ×${combo}` : toastText);
   spawnScorePop(pts, nearCell);
   sfx.clear(lines.length);
-  if (navigator.vibrate) navigator.vibrate(lines.length > 1 ? [24, 40, 24] : 18);
+  if (navigator.vibrate) navigator.vibrate(lines.length > 1 ? [18, 30, 18] : 14);
 
-  // ブロックを流れ星化
+  // ブロックを上品にスケールアウトさせて消す
   for (const line of lines) {
-    const dir = new THREE.Vector3();
-    dir.setComponent(line.axis, 1);
     line.cells.forEach((cell, i) => {
       const mesh = blockMeshes.get(board.idx(...cell));
       if (!mesh) return;
       blockMeshes.delete(board.idx(...cell));
-      anims.push(meteor(mesh, dir, i * 0.045));
+      anims.push(vanish(mesh, i * 0.045));
     });
-    // ライン全体に沿った閃光バースト
     spawnBurst(line.cells);
   }
 }
 
-function meteor(mesh, dir, delay) {
+/** 軽くふくらんで持ち上がりながらフェードアウトする消去アニメ */
+function vanish(mesh, delay) {
   let t = -delay;
-  const vel = dir.clone().multiplyScalar(9 + Math.random() * 3);
-  vel.y += 1.4;
-  const spin = new THREE.Vector3(Math.random(), Math.random(), Math.random())
-    .multiplyScalar(6);
+  const startY = mesh.position.y;
   return (dt) => {
     t += dt;
     if (t < 0) return true;
-    if (t < 0.09) {
-      // 一瞬白く発光
-      mesh.material.emissiveIntensity = 4;
-      mesh.scale.setScalar(1 + t * 2.4);
-      return true;
+    const life = t / 0.46;
+    if (life < 0.28) {
+      const k = life / 0.28;
+      mesh.scale.setScalar(1 + 0.14 * Math.sin(k * Math.PI));
+      mesh.material.emissiveIntensity = BASE_EMISSIVE + 0.7 * k;
+    } else {
+      const k = (life - 0.28) / 0.72;
+      mesh.scale.setScalar(Math.max(0.001, 1 - k));
+      mesh.position.y = startY + k * 0.55;
+      mesh.material.emissiveIntensity = BASE_EMISSIVE + 0.7 * (1 - k);
     }
-    vel.y -= 14 * dt;
-    mesh.position.addScaledVector(vel, dt);
-    mesh.rotation.x += spin.x * dt;
-    mesh.rotation.y += spin.y * dt;
-    const life = (t - 0.09) / 0.55;
-    mesh.scale.setScalar(Math.max(0.001, 1.2 * (1 - life)));
     if (life >= 1) {
       blocksGroup.remove(mesh);
       mesh.material.dispose();
@@ -615,11 +535,8 @@ const sparkTex = (() => {
   return new THREE.CanvasTexture(c);
 })();
 
-// バーストのキャンディ配色
-const BURST_COLORS = [0x18e0ff, 0xffc300, 0xff2e88, 0xb6ff2d, 0xffffff, 0x8b5bff];
-
 function spawnBurst(cells) {
-  const count = cells.length * 10;
+  const count = cells.length * 5;
   const pos = new Float32Array(count * 3);
   const vels = [];
   const p = new THREE.Vector3();
@@ -628,18 +545,18 @@ function spawnBurst(cells) {
     cellWorld(cell[0], cell[1], cell[2], p);
     pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
     vels.push(new THREE.Vector3(
-      (Math.random() - 0.5) * 5,
-      Math.random() * 4.5,
-      (Math.random() - 0.5) * 5,
+      (Math.random() - 0.5) * 3,
+      Math.random() * 3,
+      (Math.random() - 0.5) * 3,
     ));
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   const mat = new THREE.PointsMaterial({
     map: sparkTex,
-    color: BURST_COLORS[Math.floor(Math.random() * BURST_COLORS.length)],
-    size: 0.5, transparent: true, opacity: 1,
-    blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true,
+    color: 0x0a84ff,   // 基調ブルーの控えめなきらめき (ライト背景なので通常合成)
+    size: 0.3, transparent: true, opacity: 0.9,
+    depthWrite: false, sizeAttenuation: true,
   });
   const points = new THREE.Points(geo, mat);
   fxGroup.add(points);
@@ -648,14 +565,14 @@ function spawnBurst(cells) {
     t += dt;
     const arr = geo.attributes.position.array;
     for (let i = 0; i < count; i++) {
-      vels[i].y -= 9 * dt;
+      vels[i].y -= 7 * dt;
       arr[i * 3] += vels[i].x * dt;
       arr[i * 3 + 1] += vels[i].y * dt;
       arr[i * 3 + 2] += vels[i].z * dt;
     }
     geo.attributes.position.needsUpdate = true;
-    mat.opacity = Math.max(0, 1 - t / 0.8);
-    if (t >= 0.8) {
+    mat.opacity = Math.max(0, 0.9 * (1 - t / 0.7));
+    if (t >= 0.7) {
       fxGroup.remove(points);
       geo.dispose(); mat.dispose();
       return false;
@@ -732,7 +649,7 @@ function showGameOver() {
   document.body.classList.remove("playing");
   sfx.over();
   $("overScore").textContent = score;
-  $("overBestNote").textContent = score >= best && score > 0 ? "🎉 NEW BEST!" : "";
+  $("overBestNote").textContent = score >= best && score > 0 ? "自己ベスト更新" : "";
   $("submitResult").textContent = "";
   $("btnSubmit").disabled = false;
   $("btnSubmit").style.opacity = 1;
@@ -800,7 +717,7 @@ async function submitScore() {
 
   const localRank = addLocalRank(name, score);
   if (!isOnlineEnabled()) {
-    $("submitResult").textContent = `この端末で ${localRank}位 に記録しました ✦`;
+    $("submitResult").textContent = `この端末で ${localRank}位に記録しました`;
     return;
   }
   $("submitResult").textContent = "夜空に送信中…";
@@ -812,7 +729,7 @@ async function submitScore() {
       const pos = rows.findIndex((r) => r.name === name && r.score === score) + 1;
       if (pos > 0) posText = ` — 世界 ${pos}位!`;
     } catch { /* 順位表示は任意 */ }
-    $("submitResult").textContent = `世界ランキングに記録しました ✦${posText}`;
+    $("submitResult").textContent = `世界ランキングに記録しました${posText}`;
   } catch {
     submitted = false;
     btn.disabled = false;
@@ -923,7 +840,10 @@ document.querySelectorAll(".ov-close").forEach((btn) => {
 });
 
 {
-  const setMuteIcon = (m) => { $("btnMute").textContent = m ? "🔇" : "🔊"; };
+  const spk = `<path d="M4 9v6h3l5 4V5L7 9H4z" fill="currentColor"/>`;
+  const ICON_ON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${spk}<path d="M16 8.5a4 4 0 0 1 0 7"/></svg>`;
+  const ICON_OFF = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${spk}<path d="M16.5 9.5l4 5M20.5 9.5l-4 5"/></svg>`;
+  const setMuteIcon = (m) => { $("btnMute").innerHTML = m ? ICON_OFF : ICON_ON; };
   let mutedNow = store.get("muted", "0") === "1";
   setMuted(mutedNow);
   setMuteIcon(mutedNow);
@@ -975,9 +895,6 @@ function tick() {
   );
   camera.lookAt(TARGET);
 
-  starLayers[0].rotation.y = t * 0.008;
-  starLayers[1].rotation.y = -t * 0.012;
-
   // アニメーション
   for (let i = anims.length - 1; i >= 0; i--) {
     if (!anims[i](dt)) anims.splice(i, 1);
@@ -993,7 +910,9 @@ function tick() {
       held.group.scale.lerp(new THREE.Vector3(s, s, s), kk);
     }
     if (held.ghost.visible) {
-      const pulse = 0.2 + 0.12 * Math.sin(t * 7);
+      const pulse = held.clearing
+        ? 0.42 + 0.16 * Math.sin(t * 8)
+        : 0.16 + 0.09 * Math.sin(t * 6);
       held.ghost.traverse((o) => {
         if (o.isMesh) o.material.opacity = pulse;
       });
