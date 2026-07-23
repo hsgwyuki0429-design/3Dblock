@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#f5f5f7">
-<title>3Dblocks — 積んで、そろえる立体パズル</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%230071e3'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#0d0726">
+<title>3Dblocks — 積んで、そろえて、はじけろ</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='6' y='6' width='40' height='40' rx='10' fill='%23ff3b6b'/%3E%3Crect x='54' y='6' width='40' height='40' rx='10' fill='%2326d3e6'/%3E%3Crect x='6' y='54' width='40' height='40' rx='10' fill='%23ffd23e'/%3E%3Crect x='54' y='54' width='40' height='40' rx='10' fill='%239b6bff'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
 <script type="importmap">
 {
@@ -29,7 +29,7 @@
   <div class="tray-card" data-slot="1"></div>
   <div class="tray-card" data-slot="2"></div>
 </div>
-<div id="trayLabel">ドラッグして配置</div>
+<div id="trayLabel">ドラッグして配置 — 大きい形もあるよ</div>
 
 <canvas id="gl"></canvas>
 
@@ -57,12 +57,12 @@
 <!-- タイトル -->
 <div class="ov show" id="ovTitle">
   <div class="ov-inner titlecard">
-    <div class="logo-sub">3D Puzzle</div>
+    <div class="logo-sub">STACK · MATCH · POP</div>
     <h1 class="logo">3Dblocks</h1>
-    <p class="tagline">立方体にブロックを積み、<br>タテ・ヨコ・奥行きの1列をそろえて消す。</p>
-    <button id="btnStart" class="btn primary big">プレイ</button>
-    <button id="btnHowTitle" class="btn ghost">遊び方</button>
-    <div class="title-best">Best <b id="titleBest">0</b></div>
+    <p class="tagline">8×8×8の立方体にブロックを積み、<br>1列そろえて一気にはじけさせろ。</p>
+    <button id="btnStart" class="btn primary big">▶ プレイ</button>
+    <button id="btnHowTitle" class="btn ghost">遊び方をみる</button>
+    <div class="title-best">BEST <b id="titleBest">0</b></div>
   </div>
 </div>
 
@@ -71,10 +71,10 @@
   <div class="ov-inner panel">
     <h2 class="panel-title">遊び方</h2>
     <ul class="howto">
-      <li><span class="how-ic">1</span><div><b>視点をまわす</b><br>なにも持っていないとき、1本指ドラッグで回転。2本指ピンチでズーム。</div></li>
-      <li><span class="how-ic">2</span><div><b>ブロックを置く</b><br>下のブロックをドラッグ。置ける場所に近づくと仮置きされ、指を離すと確定。トレイまで戻せばキャンセル。</div></li>
-      <li><span class="how-ic">3</span><div><b>1列そろえて消す</b><br>タテ・ヨコ・奥行き、どの向きでも1列そろうと消える。同時に消すほど高得点。</div></li>
-      <li><span class="how-ic">4</span><div><b>置ける場所</b><br>ブロックは「床」か「すでに置いたブロック」に接する場所だけ。3つとも置けなくなったら終了。</div></li>
+      <li><span class="how-ic c1">1</span><div><b>視点をまわす</b><br>なにも持っていないとき、1本指ドラッグで回転。2本指ピンチでズーム。</div></li>
+      <li><span class="how-ic c2">2</span><div><b>ブロックを置く</b><br>下のブロックをドラッグ。置ける場所に近づくと仮置きされ、指を離すと確定。トレイまで戻せばキャンセル。</div></li>
+      <li><span class="how-ic c3">3</span><div><b>1列そろえてはじく</b><br>タテ・ヨコ・奥行き、どの向きでも1列(8マス)そろうと弾けて消える。同時に消すほど高得点&コンボ!</div></li>
+      <li><span class="how-ic c4">4</span><div><b>置ける場所</b><br>ブロックは「床」か「すでに置いたブロック」に接する場所だけ。大きい形もあるので置き場所を考えて。3つとも置けなくなったら終了。</div></li>
     </ul>
     <button class="btn primary ov-close" data-close="ovHelp">とじる</button>
   </div>
