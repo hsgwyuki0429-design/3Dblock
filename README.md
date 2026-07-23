@@ -45,6 +45,23 @@ python3 -m http.server 8000
 
 GitHub Pages なら: リポジトリの Settings → Pages → Branch にこのブランチを指定するだけ。
 
+## スマホアプリのように使う (PWA)
+
+- **アプリ内ブラウザからの脱出**: LINE 等のアプリ内ブラウザで開くと、LINE は公式の
+  `openExternalBrowser=1` で自動的に Safari / Chrome へ飛ぶ。抜けられない環境
+  (iOS の Instagram 等)では「ブラウザで開く / URLをコピー」の案内を表示する。
+- **全画面表示**: `manifest.json`(`display: fullscreen`)と Apple 用メタタグにより、
+  ホーム画面から起動するとブラウザのバーが消えて全画面になる。
+- **ホーム画面に追加**: マニフェスト + アイコン + Service Worker(`sw.js`)対応。
+  iOS は Safari の共有 →「ホーム画面に追加」、Android は Chrome のインストール案内から。
+  Service Worker がシェルをキャッシュするので2回目以降はオフラインでも起動する。
+- **アプリアイコン**: `icons/` に 180/192/512(＋マスカブル)を用意。ブランドのブルー地に
+  アイソメトリックの3色ブロック。差し替えるときは同じサイズの PNG を置くだけ。
+
+> 注意: PWA 機能(Service Worker / インストール)は **HTTPS**(または localhost)で動く。
+> GitHub Pages は HTTPS なのでそのまま有効。ファイルを更新したら `sw.js` の
+> `VERSION` を上げるとキャッシュが更新される。
+
 ## オンライン世界ランキングを有効にする(約5分)
 
 ランキングは Firebase Realtime Database の REST API を SDK なしで直接使います。
@@ -94,12 +111,15 @@ GitHub Pages なら: リポジトリの Settings → Pages → Branch にこの�
 ## 構成
 
 ```
-index.html        エントリ(UI マークアップ)
+index.html        エントリ(UI マークアップ + アプリ内ブラウザ脱出 + PWA登録)
 css/style.css     ビジュアルテーマ
-js/config.js      グリッドサイズ・色・スコア・ランキング設定
+manifest.json     PWA マニフェスト(全画面・ホーム画面追加・アイコン)
+sw.js             Service Worker(インストール対応 + オフラインキャッシュ)
+icons/            アプリアイコン(180/192/512・マスカブル・favicon)
+js/config.js      グリッド・モード・色・スコア・ランキング設定
 js/shapes.js      3D形状(立体ポリキューブ)の定義と生成
-js/board.js       盤面ロジック(配置判定・ライン検出)
+js/board.js       盤面ロジック(配置判定・ライン/面検出)
 js/audio.js       WebAudio シンセ効果音
-js/ranking.js     世界ランキング(Firebase REST)+端末内ランキング
+js/ranking.js     世界ランキング(Firebase REST)+端末内ランキング(モード別)
 js/game.js        three.js シーン・操作・演出・ゲームフロー
 ```
