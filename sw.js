@@ -1,5 +1,6 @@
 // 3Dblocks サービスワーカー: ホーム画面追加(インストール)対応 + シェルのオフラインキャッシュ
-const VERSION = "3dblocks-v2";
+// キャッシュ名は APP_VERSION に合わせて更新する (リリースごとに +0.1)
+const VERSION = "3dblocks-1.0";
 const SHELL = [
   "./", "./index.html", "./manifest.json",
   "./css/style.css",
