@@ -1,15 +1,15 @@
 // ========================== 3Dblocks 設定 ==========================
 
-// グリッドの一辺 (ライン消しモードの既定)
-export const GRID_N = 8;
+// グリッドの一辺 (既定)
+export const GRID_N = 5;
 
-// ゲームモード
-//  line : 1軸そろえる = 1列(N マス)消し。大きな 8×8×8 で戦略的に。全ピース(3×3×3含む)
-//  plane: 2軸そろえる = 1面(N×N マス)消し。5×5×5 でレイヤーを埋める。
+// ゲームモード (どちらも 5×5×5)
+//  line : 1軸そろえる = 1列(5マス)消し。全ピース(3×3×3含む)
+//  plane: 2軸そろえる = 1面(5×5=25マス)消し。
 //         面を埋めやすいよう大きすぎるピース(9マス超)は除外する
 // grid / maxCells はモードごとに変更可能。clear は "line" か "plane"。
 export const MODES = {
-  line:  { key: "line",  grid: 8, clear: "line",  maxCells: Infinity, label: "ライン",   sub: "1列そろえる · 8³" },
+  line:  { key: "line",  grid: 5, clear: "line",  maxCells: Infinity, label: "ライン",   sub: "1列そろえる · 5³" },
   plane: { key: "plane", grid: 5, clear: "plane", maxCells: 9,        label: "プレーン", sub: "1面そろえる · 5³" },
 };
 export const DEFAULT_MODE = "line";
