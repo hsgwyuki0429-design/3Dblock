@@ -320,6 +320,16 @@ body:not(.playing) #btnSolve { opacity: 0; pointer-events: none; }
 .btn.modebtn .mb-sub b { font-weight: 700; }
 .btn.modebtn.alt { background: var(--ink); }
 .btn.modebtn.alt:active { background: #000; }
+.btn.modebtn.continue { background: #12b76a; }   /* つづきから = 緑 */
+.btn.modebtn.continue:active { background: #0e9457; }
+
+/* LINEで送って続ける(救済) */
+.btn.revive {
+  background: #06c755; color: #fff; font-weight: 700;
+  box-shadow: 0 6px 18px rgba(6, 199, 85, 0.4);
+  margin-bottom: 10px;
+}
+.btn.revive:active { transform: scale(0.98); background: #05a948; }
 
 .over-mode {
   font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
