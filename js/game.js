@@ -124,7 +124,7 @@ const XRAY_OPACITY = 0.15;            // ON時のブロック透明度
 const FACE_NB = [
   [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
 ];
-const markerGeo = new RoundedBoxGeometry(0.52, 0.52, 0.52, 3, 0.09);
+const markerGeo = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 4, 0.1);   // 通常ブロックと同じ大きさ
 const markerMat = new THREE.MeshStandardMaterial({
   color: LIT_COLOR, emissive: LIT_EMISSIVE, emissiveIntensity: 0.95,
   roughness: 0.3, metalness: 0.0,
