@@ -124,8 +124,8 @@ const LIT_COLOR = 0xffd76a;
 const LIT_EMISSIVE = 0xffab00;
 
 // ---- すきま可視化 (X-ray) ----
-// ON: 埋まってるブロックは白基調で薄く、空いてるマスは全部 金色の半透明で示す
-const XRAY_OPACITY = 0.22;           // ON時のブロック透明度(白)
+// ON: 元々埋まってるブロックは完全に透明(見えなく)にして、空いてるマスを全部 金色の半透明で示す
+const XRAY_OPACITY = 0;              // ON時のブロック透明度(0=完全に透明)
 const markerGeo = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 4, 0.1);   // 通常ブロックと同じ大きさ
 const markerMat = new THREE.MeshStandardMaterial({
   color: LIT_COLOR, emissive: LIT_EMISSIVE, emissiveIntensity: 0.95,
@@ -312,15 +312,17 @@ function addBlockMesh(x, y, z, color, finish, delay = 0, instant = false) {
 }
 
 // ---- すきま可視化 ----
-// ON: 埋まってるブロックを白基調・半透明に。OFF: 元の色へ戻す
+// ON: 元々埋まってるブロックを完全に透明(見えなく)に。OFF: 元の色へ戻す
 function applyXray(mesh) {
   const m = mesh.material;
   if (xrayOn) {
     m.color.setHex(0xffffff);
     m.emissive.setHex(0xffffff);
-    m.emissiveIntensity = 0.06;
+    m.emissiveIntensity = 0.0;
     m.transparent = true; m.opacity = XRAY_OPACITY; m.depthWrite = false;
+    mesh.visible = false;   // 完全に透明にして空欄の金だけが見えるように
   } else {
+    mesh.visible = true;
     const c = PALETTE[mesh.userData.ci] ?? PALETTE[0];
     m.color.setHex(c.base);
     m.emissive.setHex(c.emissive);
