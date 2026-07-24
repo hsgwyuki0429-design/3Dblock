@@ -353,16 +353,77 @@ function setXray(on) {
   if (btn) btn.classList.toggle("on", on);
 }
 
-// 解プレビュー用: 元々埋まっていたブロックを半透明の白基調にする(空欄は何も出さない)
-function whitenSolutionBlocks() {
-  for (const mesh of blockMeshes.values()) {
-    const m = mesh.material;
-    m.color.setHex(0xffffff);
-    m.emissive.setHex(0xffffff);
-    m.emissiveIntensity = 0.06;
-    m.transparent = true; m.opacity = XRAY_OPACITY; m.depthWrite = false;
-    m.needsUpdate = true;
+// ---- 解プレビュー用の表示切替 ----
+// 元々埋まっていたブロックを「外枠だけ(元の色)」と「通常表示」で切り替える。
+// (プレビュー中に流れ込む解の手は preExisting フラグが無いので常に通常色のまま)
+let previewSolid = false;   // false=外枠だけ / true=通常表示
+
+// 1つの既存ブロックを外枠だけ or 通常表示にする
+function styleSolutionBlock(mesh, solid) {
+  const m = mesh.material;
+  const c = PALETTE[mesh.userData.ci] ?? PALETTE[0];
+  let edge = mesh.userData.solEdge;
+  if (!edge) {   // 外枠ライン(元の色)をこのブロック用に1本用意
+    edge = new THREE.LineSegments(
+      cubeEdgeGeo,
+      new THREE.LineBasicMaterial({ color: c.base, transparent: true, opacity: 0.95 })
+    );
+    mesh.add(edge);
+    mesh.userData.solEdge = edge;
   }
+  if (solid) {                       // 通常プレー時と同じ見た目
+    m.color.setHex(c.base);
+    m.emissive.setHex(c.emissive);
+    m.emissiveIntensity = BASE_EMISSIVE;
+    m.transparent = false; m.opacity = 1; m.depthWrite = true;
+    edge.visible = false;
+  } else {                           // 外枠だけ(中身は透明)
+    m.transparent = true; m.opacity = 0; m.depthWrite = false;
+    edge.material.color.setHex(c.base);
+    edge.visible = true;
+  }
+  m.needsUpdate = true;
+}
+
+// 既存(preExisting)ブロックすべてに表示スタイルを適用
+function styleSolutionBlocks(solid) {
+  for (const mesh of blockMeshes.values()) {
+    if (mesh.userData.preExisting) styleSolutionBlock(mesh, solid);
+  }
+}
+
+// いま盤面にある全ブロックを「元々埋まっていた」ものとして印を付ける(復元直後に呼ぶ)
+function markPreExisting() {
+  for (const mesh of blockMeshes.values()) mesh.userData.preExisting = true;
+}
+
+// プレビュー中に すきまボタンで 外枠だけ⇄通常表示 を切り替える
+function togglePreviewStyle() {
+  previewSolid = !previewSolid;
+  styleSolutionBlocks(previewSolid);
+  const btn = $("btnXray");
+  if (btn) btn.classList.toggle("on", !previewSolid);   // 外枠だけ表示中は点灯
+  hidePreviewHint();
+}
+
+// 初回だけ「このボタンで切り替えられるよ」の吹き出しを出す
+function showPreviewHint() {
+  if (store.get("hintSolveXray", "") === "1") return;
+  const hint = $("xrayHint");
+  const xb = $("btnXray");
+  if (!hint || !xb) return;
+  const r = xb.getBoundingClientRect();
+  hint.style.right = (window.innerWidth - r.left + 12) + "px";
+  hint.style.top = (r.top + r.height / 2) + "px";
+  hint.classList.add("show");
+  store.set("hintSolveXray", "1");
+  clearTimeout(showPreviewHint._t);
+  showPreviewHint._t = setTimeout(hidePreviewHint, 7000);
+}
+function hidePreviewHint() {
+  const hint = $("xrayHint");
+  if (hint) hint.classList.remove("show");
+  clearTimeout(showPreviewHint._t);
 }
 
 function popIn(mesh, delay) {
@@ -989,7 +1050,10 @@ function serializeBlocks() {
 }
 function restoreBoardFromBlocks(blocks) {
   board.clearAll();
-  for (const m of blockMeshes.values()) { blocksGroup.remove(m); m.material.dispose(); }
+  for (const m of blockMeshes.values()) {
+    blocksGroup.remove(m); m.material.dispose();
+    if (m.userData.solEdge) m.userData.solEdge.material.dispose();   // プレビュー外枠も破棄
+  }
   blockMeshes.clear();
   const n = board.n;
   for (const [idx, ci, finish] of blocks) {
@@ -1102,8 +1166,13 @@ function showLossSolution() {
   for (let i = 0; i < 3; i++) { hand[i] = null; setTrayPiece(i, null); }
   const realScore = score;
   countScore = false;                // 再生中は加点しない(演出だけ本物)
-  whitenSolutionBlocks();            // 元々埋まってたブロックを半透明の白基調に
+  previewSolid = false;              // 既定は「外枠だけ」
+  markPreExisting();                 // 元々埋まってたブロックに印
+  styleSolutionBlocks(false);        // 外枠だけ(元の色)表示に
+  const btn = $("btnXray");
+  if (btn) btn.classList.add("on");
   showToast("こう置けば続けられた");
+  showPreviewHint();                 // 初回だけ切替の吹き出し
   playSolution(sol, 0, realScore);
 }
 
@@ -1124,7 +1193,8 @@ function playSolution(sol, i, realScore) {
 function loopSolution(sol, realScore) {
   if (state !== "solving") return;
   if (dealSnapshot) restoreBoardFromBlocks(dealSnapshot.blocks);
-  whitenSolutionBlocks();            // ループ再生でも白基調を維持
+  markPreExisting();                 // 復元したブロックを再び既存扱いに
+  styleSolutionBlocks(previewSolid); // 直前に選んだ表示(外枠/通常)を維持
   playSolution(sol, 0, realScore);
 }
 
@@ -1181,6 +1251,8 @@ function commitSolutionStep(piece, [ax, ay, az]) {
 function finishSurrender() {
   if (solveTimer) { clearTimeout(solveTimer); solveTimer = null; }
   $("btnSolveDone").classList.remove("show");
+  hidePreviewHint();
+  $("btnXray").classList.remove("on");
   countScore = true;
   state = "over";
   clearSolutionGhosts();
@@ -1409,7 +1481,11 @@ $("btnStartPlane").addEventListener("click", () => { sfx.ui(); initAudio(); star
 $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
 $("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
 $("btnGoHomeOver").addEventListener("click", () => { sfx.ui(); overToHome(); });
-$("btnXray").addEventListener("click", () => { sfx.ui(); setXray(!xrayOn); });
+$("btnXray").addEventListener("click", () => {
+  sfx.ui();
+  if (state === "solving") togglePreviewStyle();   // プレビュー中は外枠⇄通常を切替
+  else setXray(!xrayOn);                            // 通常プレー中はすきま表示
+});
 $("btnSolveDone").addEventListener("click", () => { sfx.ui(); finishSurrender(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 $("btnHelp").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
