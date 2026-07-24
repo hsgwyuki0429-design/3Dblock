@@ -183,9 +183,21 @@
 
 <script>
 // サービスワーカー登録(ホーム画面追加/オフライン)
+// 新しいバージョンをデプロイしたら、更新版SWが有効化された時点で
+// 自動的に1回だけリロードして最新の見た目/コードへ切り替える
+// (これをしないと、キャッシュ済みの古いシェルが表示され続ける)
 if ("serviceWorker" in navigator) {
   addEventListener("load", function () {
-    navigator.serviceWorker.register("sw.js").catch(function () {});
+    var hadController = !!navigator.serviceWorker.controller;   // 既に制御中=更新
+    var refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (refreshing || !hadController) return;   // 初回インストール時はリロードしない
+      refreshing = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register("sw.js").then(function (reg) {
+      reg.update();   // 起動ごとに更新チェックを促す
+    }).catch(function () {});
   });
 }
 
