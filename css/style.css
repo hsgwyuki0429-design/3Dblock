@@ -137,8 +137,7 @@ body:not(.playing) #hudBtns { pointer-events: none; }
   background: #f6b73c; color: #3a2600; border-color: #f6b73c;
   box-shadow: 0 4px 18px rgba(246, 183, 60, 0.6);
 }
-body:not(.playing) #btnXray,
-body:not(.playing) #btnSolve { opacity: 0; pointer-events: none; }
+body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
 
 /* 降参ソリューション表示中の「結果へ」ボタン */
 #btnSolveDone {

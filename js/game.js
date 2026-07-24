@@ -43,8 +43,10 @@ let runStartBest = best;               // このラン開始時点のベスト (
 let combo = 0;                         // 連続クリア数
 let shake = 0;                         // 消去時のカメラシェイク量
 let mustSave = false;                  // ベスト更新時: 記録するまで再プレイ不可
-let surrendered = false;               // 降参で終了したか
-let countScore = true;                 // 最適解の再生中は false (見せるだけ)
+let surrendered = false;               // (未使用: 降参は廃止)
+let countScore = true;                 // 解の再生中は false (見せるだけ)
+let dealSnapshot = null;               // 配給時の {blocks, pieces} (詰み時の再生用)
+let overSnapshot = null;               // 詰んだ瞬間の {blocks, score} (救済復活用)
 let submitted = false;
 
 // カメラ軌道 (目標値へ毎フレーム減衰追従)
@@ -419,11 +421,9 @@ function layoutTray() {
   const label = $("trayLabel");
   label.style.top = (y - 20) + "px";
 
-  // トレイ上部の左右にフローティングボタンを配置
+  // すきま可視化ボタンをトレイ右上に
   const xb = $("btnXray");
   if (xb) { xb.style.right = "16px"; xb.style.top = (y - 60) + "px"; }
-  const sb = $("btnSolve");
-  if (sb) { sb.style.left = "16px"; sb.style.top = (y - 60) + "px"; }
 }
 
 function envSafeBottom() {
@@ -455,7 +455,7 @@ function pickColor() {
 }
 
 function refillHand() {
-  // ディーラーが場面に合わせて3つ選ぶ (3つ置き切れる手順の存在を可能な限り保証)
+  // ディーラーが場面に合わせて3つ選ぶ (3つ置き切れる手順の存在を保証)
   const pieces = dealHand(board, mode.clear, () =>
     generatePiece(N, Math.random, mode.maxCells));
   for (let i = 0; i < 3; i++) {
@@ -465,6 +465,8 @@ function refillHand() {
     hand[i] = p;
     setTrayPiece(i, hand[i]);
   }
+  // 配給時点の盤面と手札を控える (詰み時に「どう置けばよかったか」を再生するため)
+  dealSnapshot = { blocks: serializeBlocks(), pieces: hand.slice() };
 }
 
 function handEmpty() {
@@ -965,13 +967,30 @@ function desPiece(o) {
   return { cells: o.c, shape: o.sh, span: o.sp, color: PALETTE[o.ci] ?? PALETTE[0], finish: o.f || "plain" };
 }
 
-function saveGame() {
-  if (state !== "play") return;
+// 盤面ブロックを [idx, 色index, 質感] の配列に / から復元
+function serializeBlocks() {
   const blocks = [];
   for (const [idx, m] of blockMeshes) blocks.push([idx, m.userData.ci | 0, m.userData.finish || "plain"]);
+  return blocks;
+}
+function restoreBoardFromBlocks(blocks) {
+  board.clearAll();
+  for (const m of blockMeshes.values()) { blocksGroup.remove(m); m.material.dispose(); }
+  blockMeshes.clear();
+  const n = board.n;
+  for (const [idx, ci, finish] of blocks) {
+    const x = idx % n, y = Math.floor(idx / n) % n, z = Math.floor(idx / (n * n));
+    if (!board.inBounds(x, y, z)) continue;
+    board.set(x, y, z, 1);
+    addBlockMesh(x, y, z, PALETTE[ci] ?? PALETTE[0], finish, 0, true);   // instant
+  }
+}
+
+function saveGame() {
+  if (state !== "play") return;
   const data = {
     v: 1, mode: mode.key, score, combo, best: runStartBest,
-    blocks, hand: hand.map((p) => (p ? serPiece(p) : null)),
+    blocks: serializeBlocks(), hand: hand.map((p) => (p ? serPiece(p) : null)),
   };
   try { store.set(SAVE_KEY, JSON.stringify(data)); } catch {}
 }
@@ -992,26 +1011,19 @@ function resumeGame(d) {
   best = getBest(mode.key);
   runStartBest = Number.isFinite(d.best) ? d.best : best;
   configureForN(mode.grid);   // 盤面・舞台を作り直す
-  for (const m of blockMeshes.values()) { blocksGroup.remove(m); m.material.dispose(); }
-  blockMeshes.clear();
   clearSolutionGhosts();
   setXray(false);
-  const n = board.n;
-  for (const [idx, ci, finish] of d.blocks) {
-    const x = idx % n, y = Math.floor(idx / n) % n, z = Math.floor(idx / (n * n));
-    if (!board.inBounds(x, y, z)) continue;
-    board.set(x, y, z, 1);
-    addBlockMesh(x, y, z, PALETTE[ci] ?? PALETTE[0], finish, 0, true);   // instant
-  }
+  restoreBoardFromBlocks(d.blocks);
   for (let i = 0; i < 3; i++) { hand[i] = d.hand[i] ? desPiece(d.hand[i]) : null; setTrayPiece(i, hand[i]); }
   if (handEmpty()) refillHand();
+  else dealSnapshot = { blocks: serializeBlocks(), pieces: hand.slice() };
   score = d.score || 0;
   combo = d.combo || 0;
   submitted = false;
   surrendered = false;
   mustSave = false;
   countScore = true;
-  setAgainEnabled(true);
+  setGameOverButtons(true);
   $("score").textContent = score;
   $("best").textContent = best;
   hideOverlay("ovTitle");
@@ -1022,8 +1034,13 @@ function resumeGame(d) {
   saveGame();
 }
 
-/** 詰み救済(LINE共有と引き換え): 上のブロックを消して続行 */
+/** 詰み救済(LINE共有と引き換え): 詰んだ盤面に戻し、上のブロックを消して続行 */
 function revive() {
+  if (overSnapshot) {
+    restoreBoardFromBlocks(overSnapshot.blocks);
+    score = overSnapshot.score;
+    $("score").textContent = score;
+  }
   const cutoff = Math.ceil(N / 2);   // y >= cutoff を消して場所を空ける
   for (let y = N - 1; y >= cutoff; y--)
     for (let x = 0; x < N; x++)
@@ -1040,7 +1057,7 @@ function revive() {
   mustSave = false;
   surrendered = false;
   countScore = true;
-  setAgainEnabled(true);
+  setGameOverButtons(true);
   refillHand();
   document.body.classList.add("playing");
   state = "play";
@@ -1070,7 +1087,7 @@ function updateContinueButton() {
   }
 }
 
-// ---- 降参して最適解を見せる ----
+// ---- 最適解の動画再生 ----
 let solutionGhosts = [];
 let solveTimer = null;
 
@@ -1085,20 +1102,31 @@ function clearSolutionGhosts() {
   if (sd) sd.classList.remove("show");
 }
 
-/** 降参: 手札を置き切る手順(最適解)を、人が操作しているように動画で再生する */
-function surrender() {
-  if (state !== "play") return;
+/**
+ * 詰み時: 配給された最後の3つの手を「どう置けば詰まなかったか」を動画で再生する。
+ * 配給時点の盤面へ巻き戻し、ディーラーが保証した解を人が置くように見せる。
+ */
+function showLossSolution() {
   cancelHeld();
   clearSolutionGhosts();
 
-  const sol = solveHand(board, hand);
-  const realScore = score;         // 再生で盤面は変わるが、スコアは据え置き
-  for (let i = 0; i < 3; i++) { hand[i] = null; setTrayPiece(i, null); }  // 手札は実演で使い切る
-  state = "solving";
-  surrendered = true;
-  countScore = false;              // 再生中は加点しない (演出だけ本物)
-  clearSave();
-  showToast(sol.length ? "最適解を再生" : "置ける手がありません");
+  const snap = dealSnapshot;
+  const pieces = snap ? snap.pieces.filter(Boolean) : [];
+  let sol = [];
+  if (snap && pieces.length) {
+    restoreBoardFromBlocks(snap.blocks);   // 配給時点へ巻き戻す
+    sol = solveHand(board, pieces);
+  }
+  if (!sol.length) {   // 見せる解が無い(ごく稀) → そのまま終了
+    if (overSnapshot) restoreBoardFromBlocks(overSnapshot.blocks);
+    state = "over";
+    showGameOver();
+    return;
+  }
+  for (let i = 0; i < 3; i++) { hand[i] = null; setTrayPiece(i, null); }
+  const realScore = score;
+  countScore = false;                // 再生中は加点しない(演出だけ本物)
+  showToast("こう置けば続けられた");
   playSolution(sol, 0, realScore);
 }
 
@@ -1181,32 +1209,47 @@ function checkGameOver() {
   for (const p of hand) {
     if (p && board.allPlacements(p.cells).length > 0) return;
   }
-  state = "over";
+  // 詰み: 救済用に今の盤面を控え、少し置いて「どう置けばよかったか」を再生
   clearSave();
-  setTimeout(showGameOver, 650);
+  overSnapshot = { blocks: serializeBlocks(), score };
+  state = "solving";
+  setTimeout(showLossSolution, 550);
 }
 
-function setAgainEnabled(on) {
+function setGameOverButtons(on) {   // ベスト未記録中は「もういちど/ホームへ」を止める
   $("btnAgain").disabled = !on;
+  $("btnGoHomeOver").disabled = !on;
+}
+
+/** ゲームオーバー画面からタイトルへ */
+function overToHome() {
+  if (mustSave) return;
+  hideOverlay("ovOver");
+  clearSolutionGhosts();
+  clearSave();
+  state = "title";
+  document.body.classList.remove("playing");
+  refreshTitleBests();
+  updateContinueButton();
+  showOverlay("ovTitle");
 }
 
 function showGameOver() {
   document.body.classList.remove("playing");
   sfx.over();
   const isNewBest = score > 0 && score > runStartBest;
-  mustSave = isNewBest;   // ベスト更新時は記録するまで「もういちど」不可
-  $("overMode").textContent = surrendered ? `降参 · ${mode.label}モード` : `${mode.label}モード`;
+  mustSave = isNewBest;   // ベスト更新時は記録するまで先へ進めない
+  $("overMode").textContent = `${mode.label}モード`;
   $("overScore").textContent = score;
   $("overBestNote").textContent = isNewBest ? "自己ベスト更新" : "";
   $("submitResult").textContent = isNewBest
-    ? "ベスト更新!なまえを記録すると次のゲームへ進めます" : "";
-  setAgainEnabled(!isNewBest);
+    ? "ベスト更新!なまえを記録すると次へ進めます" : "";
+  setGameOverButtons(!isNewBest);
   $("btnSubmit").disabled = false;
   $("btnSubmit").style.opacity = 1;
   $("nameInput").value = store.get("name", "");
   $("btnSubmit").textContent = isOnlineEnabled() ? "世界に記録する" : "記録する";
-  // 詰みで終わったとき(降参でない)だけ、LINE共有で続ける救済を出す
-  $("btnShareContinue").style.display = surrendered ? "none" : "";
+  $("btnShareContinue").style.display = "";   // 詰み救済は常に出す
   showOverlay("ovOver");
 }
 
@@ -1277,7 +1320,7 @@ async function submitScore() {
   // 名前つきで保存できた時点で義務は果たした (オンライン送信失敗でも足止めしない)
   if (mustSave) {
     mustSave = false;
-    setAgainEnabled(true);
+    setGameOverButtons(true);
   }
   if (!isOnlineEnabled()) {
     $("submitResult").textContent = `この端末の${mode.label}で ${localRank}位に記録しました`;
@@ -1384,17 +1427,8 @@ $("btnStartLine").addEventListener("click", () => { sfx.ui(); initAudio(); start
 $("btnStartPlane").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("plane"); });
 $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
 $("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
+$("btnGoHomeOver").addEventListener("click", () => { sfx.ui(); overToHome(); });
 $("btnXray").addEventListener("click", () => { sfx.ui(); setXray(!xrayOn); });
-$("btnSolve").addEventListener("click", () => {
-  if (state !== "play") return;
-  sfx.ui();
-  showOverlay("ovSurrender");
-});
-$("btnDoSurrender").addEventListener("click", () => {
-  sfx.ui();
-  hideOverlay("ovSurrender");
-  surrender();
-});
 $("btnSolveDone").addEventListener("click", () => { sfx.ui(); finishSurrender(); });
 $("btnShareContinue").addEventListener("click", () => { sfx.ui(); shareAndRevive(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
@@ -1585,9 +1619,7 @@ window.__tsumi = {
   litCount: () => (held ? held.litMeshes.length : 0),
   setXray: (on) => setXray(on),
   markerCount: () => xrayGroup.children.length,
-  surrender: () => surrender(),
   solutionCount: () => solutionGhosts.length,
   hasSave: () => !!loadSave(),
-  revive: () => revive(),
   filled: () => board.cells.reduce((a, b) => a + b, 0),
 };
