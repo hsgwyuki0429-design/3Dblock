@@ -44,6 +44,7 @@ let combo = 0;                         // 連続クリア数
 let shake = 0;                         // 消去時のカメラシェイク量
 let mustSave = false;                  // ベスト更新時: 記録するまで再プレイ不可
 let surrendered = false;               // 降参で終了したか
+let countScore = true;                 // 最適解の再生中は false (見せるだけ)
 let submitted = false;
 
 // カメラ軌道 (目標値へ毎フレーム減衰追従)
@@ -298,14 +299,16 @@ configureForN(N);
 
 const blockMeshes = new Map();         // board idx -> mesh
 
-function addBlockMesh(x, y, z, color, finish, delay = 0) {
+function addBlockMesh(x, y, z, color, finish, delay = 0, instant = false) {
   const mesh = makeCube(color, finish);
   cellWorld(x, y, z, mesh.position);
-  mesh.scale.setScalar(0.01);
+  mesh.userData.ci = PALETTE.indexOf(color);   // セーブ用 (色/質感)
+  mesh.userData.finish = finish || "plain";
   blocksGroup.add(mesh);
   blockMeshes.set(board.idx(x, y, z), mesh);
   if (xrayOn) applyXray(mesh);
-  anims.push(popIn(mesh, delay));
+  if (instant) { mesh.scale.setScalar(1); }
+  else { mesh.scale.setScalar(0.01); anims.push(popIn(mesh, delay)); }
 }
 
 // ---- すきま可視化 ----
@@ -658,6 +661,7 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
 
   if (handEmpty()) refillHand();
   if (xrayOn) refreshXrayMarkers();
+  saveGame();
   checkGameOver();
   return true;
 }
@@ -675,7 +679,7 @@ function doClear(groups, nearCell) {
   const unit = mode.clear === "plane" ? "面" : "列";
   const toastText = `${groups.length}${unit}そろえた`;
   showToast(combo > 1 ? `${toastText} · コンボ×${combo}` : toastText);
-  spawnScorePop(pts, nearCell);
+  if (countScore) spawnScorePop(pts, nearCell);
   sfx.clear(groups.length);
   shake = Math.min(1.2, 0.45 + groups.length * 0.22);
   if (navigator.vibrate) navigator.vibrate(groups.length > 1 ? [18, 30, 18] : 14);
@@ -872,6 +876,7 @@ function spawnBurst(cells, opts = {}) {
 // ---------------------------------------------------------------- スコア/UI
 
 function addScore(pts) {
+  if (!countScore) return;   // 最適解の再生中は加点しない
   score += pts;
   $("score").textContent = score;
   $("score").classList.remove("bump");
@@ -926,6 +931,7 @@ function startGame(modeKey = mode.key) {
   combo = 0;
   submitted = false;
   surrendered = false;
+  countScore = true;
   $("score").textContent = "0";
   $("best").textContent = best;
   refillHand();
@@ -933,6 +939,7 @@ function startGame(modeKey = mode.key) {
   hideOverlay("ovOver");
   document.body.classList.add("playing");
   state = "play";
+  saveGame();
 }
 
 /** プレイ中からタイトルへ戻る */
@@ -940,10 +947,127 @@ function goHome() {
   if (state !== "play") return;
   cancelHeld();
   clearSolutionGhosts();
+  clearSave();
   state = "title";
   document.body.classList.remove("playing");
   refreshTitleBests();
+  updateContinueButton();
   showOverlay("ovTitle");
+}
+
+// ---- セーブ / 復元 / 復活 ----
+const SAVE_KEY = "save";
+
+function serPiece(p) {
+  return { c: p.cells, sh: p.shape, sp: p.span, ci: PALETTE.indexOf(p.color), f: p.finish };
+}
+function desPiece(o) {
+  return { cells: o.c, shape: o.sh, span: o.sp, color: PALETTE[o.ci] ?? PALETTE[0], finish: o.f || "plain" };
+}
+
+function saveGame() {
+  if (state !== "play") return;
+  const blocks = [];
+  for (const [idx, m] of blockMeshes) blocks.push([idx, m.userData.ci | 0, m.userData.finish || "plain"]);
+  const data = {
+    v: 1, mode: mode.key, score, combo, best: runStartBest,
+    blocks, hand: hand.map((p) => (p ? serPiece(p) : null)),
+  };
+  try { store.set(SAVE_KEY, JSON.stringify(data)); } catch {}
+}
+function loadSave() {
+  try {
+    const raw = store.get(SAVE_KEY, "");
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || !MODES[d.mode] || !Array.isArray(d.blocks)) return null;
+    return d;
+  } catch { return null; }
+}
+function clearSave() { store.set(SAVE_KEY, ""); }
+
+/** セーブから再開 */
+function resumeGame(d) {
+  mode = MODES[d.mode] || MODES[DEFAULT_MODE];
+  best = getBest(mode.key);
+  runStartBest = Number.isFinite(d.best) ? d.best : best;
+  configureForN(mode.grid);   // 盤面・舞台を作り直す
+  for (const m of blockMeshes.values()) { blocksGroup.remove(m); m.material.dispose(); }
+  blockMeshes.clear();
+  clearSolutionGhosts();
+  setXray(false);
+  const n = board.n;
+  for (const [idx, ci, finish] of d.blocks) {
+    const x = idx % n, y = Math.floor(idx / n) % n, z = Math.floor(idx / (n * n));
+    if (!board.inBounds(x, y, z)) continue;
+    board.set(x, y, z, 1);
+    addBlockMesh(x, y, z, PALETTE[ci] ?? PALETTE[0], finish, 0, true);   // instant
+  }
+  for (let i = 0; i < 3; i++) { hand[i] = d.hand[i] ? desPiece(d.hand[i]) : null; setTrayPiece(i, hand[i]); }
+  if (handEmpty()) refillHand();
+  score = d.score || 0;
+  combo = d.combo || 0;
+  submitted = false;
+  surrendered = false;
+  mustSave = false;
+  countScore = true;
+  setAgainEnabled(true);
+  $("score").textContent = score;
+  $("best").textContent = best;
+  hideOverlay("ovTitle");
+  hideOverlay("ovOver");
+  document.body.classList.add("playing");
+  state = "play";
+  checkGameOver();   // 再開直後に詰んでいたら通常処理
+  saveGame();
+}
+
+/** 詰み救済(LINE共有と引き換え): 上のブロックを消して続行 */
+function revive() {
+  const cutoff = Math.ceil(N / 2);   // y >= cutoff を消して場所を空ける
+  for (let y = N - 1; y >= cutoff; y--)
+    for (let x = 0; x < N; x++)
+      for (let z = 0; z < N; z++) {
+        if (!board.get(x, y, z)) continue;
+        board.set(x, y, z, 0);
+        const idx = board.idx(x, y, z);
+        const mesh = blockMeshes.get(idx);
+        if (mesh) { blockMeshes.delete(idx); anims.push(vanish(mesh, 0)); }
+      }
+  shake = 1.0;
+  sfx.clear(2);
+  hideOverlay("ovOver");
+  mustSave = false;
+  surrendered = false;
+  countScore = true;
+  setAgainEnabled(true);
+  refillHand();
+  document.body.classList.add("playing");
+  state = "play";
+  saveGame();
+}
+
+/** LINEで共有して続きから */
+function shareAndRevive() {
+  const url = location.origin + location.pathname;
+  const text = "これおもろい\n" + url;
+  const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(text);
+  try { window.open(lineUrl, "_blank"); } catch { location.href = lineUrl; }
+  revive();
+}
+
+function updateContinueButton() {
+  const btn = $("btnContinue");
+  if (!btn) return;
+  const d = loadSave();
+  if (d) {
+    btn.style.display = "";
+    btn.querySelector(".mb-sub").textContent =
+      `${MODES[d.mode].label} · ${d.score}点から`;
+    btn.onclick = () => { sfx.ui(); initAudio(); resumeGame(d); };
+  } else {
+    btn.style.display = "none";
+  }
 }
 
 // ---- 降参して最適解を見せる ----
@@ -961,71 +1085,95 @@ function clearSolutionGhosts() {
   if (sd) sd.classList.remove("show");
 }
 
-function ghostPopIn(group, delay) {
-  let t = -delay;
-  group.visible = false;
-  return (dt) => {
-    t += dt;
-    if (t < 0) return true;
-    group.visible = true;
-    const k = Math.min(t / 0.3, 1);
-    const s = 1 + 0.25 * Math.sin(k * Math.PI) - 0.99 * (1 - k) * (1 - k);
-    group.scale.setScalar(Math.max(0.01, s));
-    if (k >= 1) { group.scale.setScalar(1); return false; }
-    return true;
-  };
-}
-
-/** 降参: 手札を置き切る手順(最適解)をゴーストで示し、ゲーム終了へ */
+/** 降参: 手札を置き切る手順(最適解)を、人が操作しているように動画で再生する */
 function surrender() {
   if (state !== "play") return;
   cancelHeld();
   clearSolutionGhosts();
 
   const sol = solveHand(board, hand);
+  const realScore = score;         // 再生で盤面は変わるが、スコアは据え置き
+  for (let i = 0; i < 3; i++) { hand[i] = null; setTrayPiece(i, null); }  // 手札は実演で使い切る
+  state = "solving";
+  surrendered = true;
+  countScore = false;              // 再生中は加点しない (演出だけ本物)
+  clearSave();
+  showToast(sol.length ? "最適解を再生" : "置ける手がありません");
+  playSolution(sol, 0, realScore);
+}
 
-  // 解の各ピースを最終位置に配置したときの盤面を作り、ゴーストを置いて元に戻す
-  const applied = [];
-  for (const step of sol) {
-    board.place(step.piece.cells, ...step.pos);
-    applied.push(step);
+function playSolution(sol, i, realScore) {
+  if (state !== "solving") return;
+  if (i >= sol.length) {
+    countScore = true;
+    score = realScore;
+    $("score").textContent = score;
+    $("btnSolveDone").classList.add("show");   // 好きなだけ眺めてから結果へ
+    if (solveTimer) clearTimeout(solveTimer);
+    solveTimer = setTimeout(finishSurrender, 20000);
+    return;
   }
-  sol.forEach((step, i) => {
-    const g = makePieceGroup(step.piece);   // 実色のブロック
-    g.position.copy(cellWorld(step.pos[0], step.pos[1], step.pos[2]));
-    const meshes = [];
-    g.traverse((o) => { if (o.isMesh) meshes.push(o); });
-    for (const m of meshes) {
-      m.material.transparent = true;
-      m.material.opacity = 0.72;
-      m.material.emissiveIntensity = 0.6;
-      m.material.depthWrite = false;
-      m.material.needsUpdate = true;
-      m.add(new THREE.LineSegments(   // 白い輪郭で解の形をくっきり
+  flyInPiece(sol[i], () => {
+    solveTimer = setTimeout(() => playSolution(sol, i + 1, realScore), 470);
+  });
+}
+
+/** 1ピースを上空から目標位置へ滑らせ、着地で本当に配置する(消去演出も本物) */
+function flyInPiece(step, onDone) {
+  const piece = step.piece;
+  const [ax, ay, az] = step.pos;
+  const targetPos = cellWorld(ax, ay, az);
+  const ghost = makePieceGroup(piece);
+  ghost.traverse((o) => {
+    if (o.isMesh && o.material) {
+      o.material.transparent = true;
+      o.material.opacity = 0.85;
+      o.material.emissiveIntensity = 0.5;
+      o.material.depthWrite = false;
+      o.material.needsUpdate = true;
+      o.add(new THREE.LineSegments(
         cubeEdgeGeo,
-        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })
       ));
     }
-    scene.add(g);
-    solutionGhosts.push(g);
-    anims.push(ghostPopIn(g, 0.35 * i));   // 置く順に現れる
   });
-  for (let i = applied.length - 1; i >= 0; i--) {
-    board.unplace(applied[i].piece.cells, ...applied[i].pos);
-  }
+  const start = targetPos.clone(); start.y += N + 2.5;
+  ghost.position.copy(start);
+  scene.add(ghost);
+  solutionGhosts.push(ghost);
+  let t = 0; const dur = 0.5;
+  anims.push((dt) => {
+    t += dt;
+    const k = Math.min(t / dur, 1);
+    const e = 1 - Math.pow(1 - k, 3);   // ease-out
+    ghost.position.lerpVectors(start, targetPos, e);
+    if (k >= 1) {
+      scene.remove(ghost); disposeGroup(ghost);
+      const gi = solutionGhosts.indexOf(ghost);
+      if (gi >= 0) solutionGhosts.splice(gi, 1);
+      if (state === "solving") { commitSolutionStep(piece, [ax, ay, az]); onDone(); }
+      return false;
+    }
+    return true;
+  });
+}
 
-  showToast(sol.length >= hand.filter(Boolean).length
-    ? "最適解はこちら" : "ここまで置けた");
-  state = "over";
-  surrendered = true;
-  $("btnSolveDone").classList.add("show");   // 好きなだけ眺めてから結果へ
-  if (solveTimer) clearTimeout(solveTimer);
-  solveTimer = setTimeout(finishSurrender, 15000);   // 放置時の保険
+function commitSolutionStep(piece, [ax, ay, az]) {
+  board.place(piece.cells, ax, ay, az);
+  piece.cells.forEach(([dx, dy, dz], k) => {
+    addBlockMesh(ax + dx, ay + dy, az + dz, piece.color, piece.finish, k * 0.02);
+  });
+  sfx.place();
+  const groups = board.completedGroups(mode.clear);
+  if (groups.length) doClear(groups, [ax + piece.span[0] / 2 - 0.5, ay, az]);
 }
 
 function finishSurrender() {
   if (solveTimer) { clearTimeout(solveTimer); solveTimer = null; }
   $("btnSolveDone").classList.remove("show");
+  countScore = true;
+  state = "over";
+  clearSolutionGhosts();
   showGameOver();
 }
 
@@ -1034,6 +1182,7 @@ function checkGameOver() {
     if (p && board.allPlacements(p.cells).length > 0) return;
   }
   state = "over";
+  clearSave();
   setTimeout(showGameOver, 650);
 }
 
@@ -1056,6 +1205,8 @@ function showGameOver() {
   $("btnSubmit").style.opacity = 1;
   $("nameInput").value = store.get("name", "");
   $("btnSubmit").textContent = isOnlineEnabled() ? "世界に記録する" : "記録する";
+  // 詰みで終わったとき(降参でない)だけ、LINE共有で続ける救済を出す
+  $("btnShareContinue").style.display = surrendered ? "none" : "";
   showOverlay("ovOver");
 }
 
@@ -1245,6 +1396,7 @@ $("btnDoSurrender").addEventListener("click", () => {
   surrender();
 });
 $("btnSolveDone").addEventListener("click", () => { sfx.ui(); finishSurrender(); });
+$("btnShareContinue").addEventListener("click", () => { sfx.ui(); shareAndRevive(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 $("btnHelp").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 function openRanking() {
@@ -1288,7 +1440,12 @@ function refreshTitleBests() {
 }
 $("best").textContent = best;
 refreshTitleBests();
+updateContinueButton();   // セーブがあれば「つづきから」を出す
 $("appVersion").textContent = "v" + APP_VERSION;
+
+// アプリを閉じる/バックグラウンドへ移る前に保存
+addEventListener("pagehide", saveGame);
+addEventListener("visibilitychange", () => { if (document.hidden) saveGame(); });
 
 // ---------------------------------------------------------------- メインループ
 
@@ -1430,4 +1587,7 @@ window.__tsumi = {
   markerCount: () => xrayGroup.children.length,
   surrender: () => surrender(),
   solutionCount: () => solutionGhosts.length,
+  hasSave: () => !!loadSave(),
+  revive: () => revive(),
+  filled: () => board.cells.reduce((a, b) => a + b, 0),
 };

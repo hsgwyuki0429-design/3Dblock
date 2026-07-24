@@ -19,41 +19,66 @@ const NO_FIT = -1e9;     // どこにも置けないピース
  */
 export function dealHand(board, clear, makePiece) {
   const groups = collectGroups(board, clear);
-  const cands = [];
-  for (let i = 0; i < CANDIDATES; i++) {
-    const p = makePiece();
-    p.fit = bestFit(board, groups, p);
-    cands.push(p);
-  }
-  cands.sort((a, b) => b.fit - a.fit);
 
-  // 上位1 + 中位1 + ワイルド1 を基本に、解が存在する組み合わせを探す
-  const mid = () => 4 + Math.floor(Math.random() * 4);          // 4〜7位
-  const tail = () => 8 + Math.floor(Math.random() * (CANDIDATES - 8)); // 8位〜
-  const combos = [
-    [0, mid(), tail()],
-    [0, mid(), tail()],
-    [1, mid(), tail()],
-    [0, 1, mid()],
-    [0, 2, mid()],
-    [0, 1, 2],
-    [1, 2, 3],
-    [0, 3, 4],
-  ];
-  for (const idxs of combos) {
-    const uniq = [...new Set(idxs)];
-    if (uniq.length < 3) continue;
-    const trio = uniq.map((i) => cands[Math.min(i, cands.length - 1)]);
-    if (trio.some((p) => p.fit <= NO_FIT)) continue;
-    if (isSolvable(board, trio)) return shuffle(trio);
+  // 候補を2ラウンドまで生成し、「3つとも置き切れる」組を確実に探す
+  for (let round = 0; round < 2; round++) {
+    const cands = [];
+    for (let i = 0; i < CANDIDATES; i++) {
+      const p = makePiece();
+      p.fit = bestFit(board, groups, p);
+      cands.push(p);
+    }
+    const placeable = cands.filter((p) => p.fit > NO_FIT);
+    placeable.sort((a, b) => b.fit - a.fit);   // はまり具合の良い順
+    const trio = findSolvableTrio(board, placeable);
+    if (trio) return shuffle(trio);
+
+    // 解ける組が無くても、置けるのが3つ以上あるならそれで妥協 (最終ラウンド)
+    if (round === 1 && placeable.length >= 3) {
+      return shuffle(placeable.slice(0, 3));
+    }
   }
 
-  // 保険: 置けるピースの上位3つ (解保証なし。ほぼ満杯の盤面などで到達)
-  const placeable = cands.filter((p) => p.fit > NO_FIT).slice(0, 3);
-  for (let i = 0; placeable.length < 3 && i < cands.length; i++) {
-    if (!placeable.includes(cands[i])) placeable.push(cands[i]);
+  // ほぼ満杯: 置けるものだけかき集める (ここに来たら実質ゲームオーバー間近)
+  const last = [];
+  for (let i = 0; i < CANDIDATES && last.length < 3; i++) last.push(makePiece());
+  return last;
+}
+
+/**
+ * 置ける候補の中から「3つとも順に置き切れる」組を探す。
+ * まず はまり具合の良いピースを含む組を優先し(気持ちよさ)、
+ * 見つからなければ総当りで解ける組を探す(詰み防止の保証)。
+ */
+function findSolvableTrio(board, placeable) {
+  if (placeable.length < 3) return null;
+  const M = Math.min(placeable.length, 12);   // 上位12個を対象
+  let checked = 0;
+
+  // pass1: 最上位(はまりの良い)ピースを必ず1つ含む組を優先
+  const withTop = [];
+  for (let a = 1; a < M; a++)
+    for (let b = a + 1; b < M; b++) withTop.push([0, a, b]);
+  shuffle(withTop);
+  for (const [i, j, k] of withTop) {
+    if (checked++ > 70) break;
+    const trio = [placeable[i], placeable[j], placeable[k]];
+    if (isSolvable(board, trio)) return trio;
   }
-  return shuffle(placeable);
+
+  // pass2: 上位12個の総当り
+  const all = [];
+  for (let i = 0; i < M; i++)
+    for (let j = i + 1; j < M; j++)
+      for (let k = j + 1; k < M; k++) all.push([i, j, k]);
+  shuffle(all);
+  checked = 0;
+  for (const [i, j, k] of all) {
+    if (checked++ > 140) break;
+    const trio = [placeable[i], placeable[j], placeable[k]];
+    if (isSolvable(board, trio)) return trio;
+  }
+  return null;
 }
 
 // ---- グループ (ライン/面) の充填状況 ----
