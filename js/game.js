@@ -103,7 +103,8 @@ scene.add(fillLight);
 
 const blocksGroup = new THREE.Group();
 const fxGroup = new THREE.Group();
-scene.add(blocksGroup, fxGroup);
+const xrayGroup = new THREE.Group();   // すきま可視化の金マーカー
+scene.add(blocksGroup, fxGroup, xrayGroup);
 
 // ---------------------------------------------------------------- 素材
 
@@ -117,6 +118,19 @@ const CLEAR_EMISSIVE = 0.7;   // 消去予告のときだけ軽く持ち上げ�
 // 消える予告のハイライト色 (どのパレット色よりも明るい金)
 const LIT_COLOR = 0xffd76a;
 const LIT_EMISSIVE = 0xffab00;
+
+// ---- すきま可視化 (X-ray) ----
+const XRAY_OPACITY = 0.15;            // ON時のブロック透明度
+const FACE_NB = [
+  [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+];
+const markerGeo = new RoundedBoxGeometry(0.52, 0.52, 0.52, 3, 0.09);
+const markerMat = new THREE.MeshStandardMaterial({
+  color: LIT_COLOR, emissive: LIT_EMISSIVE, emissiveIntensity: 0.95,
+  roughness: 0.3, metalness: 0.0,
+  transparent: true, opacity: 0.92, depthWrite: true,
+});
+let xrayOn = false;
 
 // ---- ブロックの質感バリエーション ----
 // plain=マット / gloss=つやつやキャンディ / stripe=細い斜めストライプ / dots=ドット
@@ -289,7 +303,46 @@ function addBlockMesh(x, y, z, color, finish, delay = 0) {
   mesh.scale.setScalar(0.01);
   blocksGroup.add(mesh);
   blockMeshes.set(board.idx(x, y, z), mesh);
+  if (xrayOn) applyXray(mesh);
   anims.push(popIn(mesh, delay));
+}
+
+// ---- すきま可視化 ----
+function applyXray(mesh) {
+  const m = mesh.material;
+  if (xrayOn) { m.transparent = true; m.opacity = XRAY_OPACITY; m.depthWrite = false; }
+  else { m.transparent = false; m.opacity = 1; m.depthWrite = true; }
+  m.needsUpdate = true;   // transparent フラグ変更は再コンパイルが必要
+}
+
+// 囲まれた(=見えにくい)空きマスに金マーカーを立てる
+function refreshXrayMarkers() {
+  while (xrayGroup.children.length) xrayGroup.children.pop();  // geo/mat は共有なので破棄しない
+  if (!xrayOn) return;
+  const n = board.n;
+  for (let x = 0; x < n; x++)
+    for (let y = 0; y < n; y++)
+      for (let z = 0; z < n; z++) {
+        if (board.get(x, y, z)) continue;
+        let occ = 0;
+        for (const [dx, dy, dz] of FACE_NB) {
+          const px = x + dx, py = y + dy, pz = z + dz;
+          if (board.inBounds(px, py, pz) && board.get(px, py, pz)) occ++;
+        }
+        if (occ >= 3) {   // 半分以上ブロックに囲まれた空きマス
+          const mk = new THREE.Mesh(markerGeo, markerMat);
+          cellWorld(x, y, z, mk.position);
+          xrayGroup.add(mk);
+        }
+      }
+}
+
+function setXray(on) {
+  xrayOn = on;
+  for (const mesh of blockMeshes.values()) applyXray(mesh);
+  refreshXrayMarkers();
+  const btn = $("btnXray");
+  if (btn) btn.classList.toggle("on", on);
 }
 
 function popIn(mesh, delay) {
@@ -361,6 +414,13 @@ function layoutTray() {
   trayTopY = y - 12;
   const label = $("trayLabel");
   label.style.top = (y - 20) + "px";
+
+  // すきま可視化ボタンをトレイの右上に配置
+  const xb = $("btnXray");
+  if (xb) {
+    xb.style.right = "16px";
+    xb.style.top = (y - 60) + "px";
+  }
 }
 
 function envSafeBottom() {
@@ -597,6 +657,7 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
   }
 
   if (handEmpty()) refillHand();
+  if (xrayOn) refreshXrayMarkers();
   checkGameOver();
   return true;
 }
@@ -859,6 +920,7 @@ function startGame(modeKey = mode.key) {
   }
   blockMeshes.clear();
   cancelHeld();
+  setXray(false);   // 新しいゲームはすきま表示オフから
   score = 0;
   combo = 0;
   submitted = false;
@@ -1085,6 +1147,7 @@ $("btnStartLine").addEventListener("click", () => { sfx.ui(); initAudio(); start
 $("btnStartPlane").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("plane"); });
 $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
 $("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
+$("btnXray").addEventListener("click", () => { sfx.ui(); setXray(!xrayOn); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 $("btnHelp").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 function openRanking() {
@@ -1201,6 +1264,9 @@ function tick() {
     }
   }
 
+  // すきまマーカーのパルス
+  if (xrayOn) markerMat.emissiveIntensity = 0.85 + 0.4 * Math.sin(t * 5);
+
   // 描画: メイン → トレイ3枠
   renderer.setScissorTest(false);
   renderer.setViewport(0, 0, innerWidth, innerHeight);
@@ -1262,4 +1328,6 @@ window.__tsumi = {
   },
   lift: LIFT_PX,
   litCount: () => (held ? held.litMeshes.length : 0),
+  setXray: (on) => setXray(on),
+  markerCount: () => xrayGroup.children.length,
 };

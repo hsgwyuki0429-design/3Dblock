@@ -118,6 +118,27 @@ body:not(.playing) #hudBtns { pointer-events: none; }
 #hudLeft { display: flex; gap: 12px; align-items: flex-start; }
 #btnHome { pointer-events: auto; flex: 0 0 auto; }
 
+/* すきま可視化 フローティングボタン (右下) */
+.fab {
+  position: fixed; z-index: 3;
+  width: 52px; height: 52px; border-radius: 50%;
+  border: 1px solid var(--hair);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: opacity 0.35s ease, background 0.18s, color 0.18s, transform 0.1s;
+}
+.fab svg { width: 24px; height: 24px; display: block; }
+.fab:active { transform: scale(0.9); }
+.fab.on {
+  background: #f6b73c; color: #3a2600; border-color: #f6b73c;
+  box-shadow: 0 4px 18px rgba(246, 183, 60, 0.6);
+}
+body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
+
 #hudBtns { display: flex; gap: 10px; pointer-events: auto; }
 .iconbtn {
   width: 40px; height: 40px;
