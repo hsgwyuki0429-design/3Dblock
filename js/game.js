@@ -299,7 +299,7 @@ configureForN(N);
 
 const blockMeshes = new Map();         // board idx -> mesh
 
-function addBlockMesh(x, y, z, color, finish, delay = 0, instant = false) {
+function addBlockMesh(x, y, z, color, finish, delay = 0, instant = false, glow = false) {
   const mesh = makeCube(color, finish);
   cellWorld(x, y, z, mesh.position);
   mesh.userData.ci = PALETTE.indexOf(color);   // セーブ用 (色/質感)
@@ -307,6 +307,7 @@ function addBlockMesh(x, y, z, color, finish, delay = 0, instant = false) {
   blocksGroup.add(mesh);
   blockMeshes.set(board.idx(x, y, z), mesh);
   if (xrayOn) applyXray(mesh);
+  if (glow) applySolutionGlow(mesh);           // プレビューで置かれたブロックは発光+すり抜け
   if (instant) { mesh.scale.setScalar(1); }
   else { mesh.scale.setScalar(0.01); anims.push(popIn(mesh, delay)); }
 }
@@ -355,77 +356,49 @@ function setXray(on) {
   if (btn) btn.classList.toggle("on", on);
 }
 
-// ---- 解プレビュー用の表示切替 ----
-// 元々埋まっていたブロックを「外枠だけ(元の色)」と「通常表示」で切り替える。
-// (プレビュー中に流れ込む解の手は preExisting フラグが無いので常に通常色のまま)
-let previewSolid = false;   // false=外枠だけ / true=通常表示
-
-// 1つの既存ブロックを外枠だけ or 通常表示にする
-function styleSolutionBlock(mesh, solid) {
-  const m = mesh.material;
-  const c = PALETTE[mesh.userData.ci] ?? PALETTE[0];
-  let edge = mesh.userData.solEdge;
-  if (!edge) {   // 外枠ライン(元の色)をこのブロック用に1本用意
-    edge = new THREE.LineSegments(
-      cubeEdgeGeo,
-      new THREE.LineBasicMaterial({ color: c.base, transparent: true, opacity: 0.95 })
-    );
-    mesh.add(edge);
-    mesh.userData.solEdge = edge;
-  }
-  if (solid) {                       // 通常プレー時と同じ見た目
-    m.color.setHex(c.base);
-    m.emissive.setHex(c.emissive);
-    m.emissiveIntensity = BASE_EMISSIVE;
-    m.transparent = false; m.opacity = 1; m.depthWrite = true;
-    edge.visible = false;
-  } else {                           // 外枠だけ(中身は透明)
-    m.transparent = true; m.opacity = 0; m.depthWrite = false;
-    edge.material.color.setHex(c.base);
-    edge.visible = true;
-  }
-  m.needsUpdate = true;
-}
-
-// 既存(preExisting)ブロックすべてに表示スタイルを適用
-function styleSolutionBlocks(solid) {
-  for (const mesh of blockMeshes.values()) {
-    if (mesh.userData.preExisting) styleSolutionBlock(mesh, solid);
-  }
-}
-
-// いま盤面にある全ブロックを「元々埋まっていた」ものとして印を付ける(復元直後に呼ぶ)
-function markPreExisting() {
-  for (const mesh of blockMeshes.values()) mesh.userData.preExisting = true;
-}
-
-// プレビュー中に すきまボタンで 外枠だけ⇄通常表示 を切り替える
-function togglePreviewStyle() {
-  previewSolid = !previewSolid;
-  styleSolutionBlocks(previewSolid);
+// すきまボタンの表示/非表示 (解プレビュー中は隠す)
+function setXrayBtnVisible(v) {
   const btn = $("btnXray");
-  if (btn) btn.classList.toggle("on", !previewSolid);   // 外枠だけ表示中は点灯
-  hidePreviewHint();
+  if (btn) btn.style.display = v ? "" : "none";
 }
 
-// 初回だけ「このボタンで切り替えられるよ」の吹き出しを出す
-function showPreviewHint() {
-  if (store.get("hintSolveXray", "") === "1") return;
-  const hint = $("xrayHint");
-  const xb = $("btnXray");
-  if (!hint || !xb) return;
-  const r = xb.getBoundingClientRect();
-  hint.style.right = (window.innerWidth - r.left + 12) + "px";
-  hint.style.top = (r.top + r.height / 2) + "px";
-  hint.classList.add("show");
-  store.set("hintSolveXray", "1");
-  clearTimeout(showPreviewHint._t);
-  showPreviewHint._t = setTimeout(hidePreviewHint, 7000);
+// ---- 解プレビュー: 置かれるブロックだけを光らせ、既存ブロックを通り抜けて見せる ----
+// 既存ブロックは通常表示のまま。プレビューで新しく置かれたブロックだけを
+// 金色に発光させ、既存ブロックの奥にあっても手前に描いて位置を分かりやすくする。
+let solutionPlacedMeshes = [];        // プレビューで置かれた発光ブロック(パルス用)
+const SOL_GLOW_EMISSIVE = 0xffd76a;   // 明るい金の発光
+
+// プレビューで新しく置かれた1ブロックを「発光+すり抜け表示」にする
+function applySolutionGlow(mesh) {
+  const m = mesh.material;
+  m.emissive.setHex(SOL_GLOW_EMISSIVE);
+  m.emissiveIntensity = 0.9;
+  m.depthTest = false;         // 既存ブロックの奥にあっても手前に描く(通り抜け)
+  m.needsUpdate = true;
+  mesh.renderOrder = 900;
+  solutionPlacedMeshes.push(mesh);
 }
-function hidePreviewHint() {
-  const hint = $("xrayHint");
-  if (hint) hint.classList.remove("show");
-  clearTimeout(showPreviewHint._t);
+
+function clearSolutionGlow() {
+  solutionPlacedMeshes = [];
+}
+
+// プレビュー中: いま置くピースがよく見える向きへカメラを寄せる
+function aimCameraAtPreview(ax, ay, az, piece) {
+  const cx = ax + (piece.span[0] - 1) / 2;
+  const cy = ay + (piece.span[1] - 1) / 2;
+  const cz = az + (piece.span[2] - 1) / 2;
+  const w = cellWorld(cx, cy, cz);
+  const dx = w.x - TARGET.x, dz = w.z - TARGET.z;
+  if (Math.hypot(dx, dz) > 0.4) {         // ピースがある側から覗く向きへ回す
+    let a = Math.atan2(dx, dz);
+    while (a - cam.tAz > Math.PI) a -= 2 * Math.PI;   // 一番近い等価角へ(長回り防止)
+    while (a - cam.tAz < -Math.PI) a += 2 * Math.PI;
+    cam.tAz = a;
+  }
+  const dy = w.y - TARGET.y;              // 高い所は見下ろし・低い所は見上げ気味に
+  cam.tPol = THREE.MathUtils.clamp(1.12 - dy * 0.14, POL_MIN, POL_MAX);
+  cam.tR = N * 3.1;                       // 少しだけ寄る
 }
 
 function popIn(mesh, delay) {
@@ -1005,7 +978,10 @@ function startGame(modeKey = mode.key) {
   blockMeshes.clear();
   cancelHeld();
   clearSolutionGhosts();
+  clearSolutionGlow();
+  setXrayBtnVisible(true);   // プレビュー用に隠していたら戻す
   setXray(false);   // 新しいゲームはすきま表示オフから
+  cam.tAz = -0.65; cam.tPol = 1.05; cam.tR = N * 3.4;   // 既定の見え方へ戻す(プレビューのカメラ移動を持ち越さない)
   score = 0;
   combo = 0;
   submitted = false;
@@ -1054,7 +1030,6 @@ function restoreBoardFromBlocks(blocks) {
   board.clearAll();
   for (const m of blockMeshes.values()) {
     blocksGroup.remove(m); m.material.dispose();
-    if (m.userData.solEdge) m.userData.solEdge.material.dispose();   // プレビュー外枠も破棄
   }
   blockMeshes.clear();
   const n = board.n;
@@ -1168,13 +1143,9 @@ function showLossSolution() {
   for (let i = 0; i < 3; i++) { hand[i] = null; setTrayPiece(i, null); }
   const realScore = score;
   countScore = false;                // 再生中は加点しない(演出だけ本物)
-  previewSolid = false;              // 既定は「外枠だけ」
-  markPreExisting();                 // 元々埋まってたブロックに印
-  styleSolutionBlocks(false);        // 外枠だけ(元の色)表示に
-  const btn = $("btnXray");
-  if (btn) btn.classList.add("on");
+  clearSolutionGlow();               // 発光ブロックの記録をリセット
+  setXrayBtnVisible(false);          // プレビュー中はすきまボタンを隠す
   showToast("こう置けば続けられた");
-  showPreviewHint();                 // 初回だけ切替の吹き出し
   playSolution(sol, 0, realScore);
 }
 
@@ -1195,8 +1166,7 @@ function playSolution(sol, i, realScore) {
 function loopSolution(sol, realScore) {
   if (state !== "solving") return;
   if (dealSnapshot) restoreBoardFromBlocks(dealSnapshot.blocks);
-  markPreExisting();                 // 復元したブロックを再び既存扱いに
-  styleSolutionBlocks(previewSolid); // 直前に選んだ表示(外枠/通常)を維持
+  clearSolutionGlow();               // 前回の発光ブロック記録を破棄
   playSolution(sol, 0, realScore);
 }
 
@@ -1205,17 +1175,21 @@ function flyInPiece(step, onDone) {
   const piece = step.piece;
   const [ax, ay, az] = step.pos;
   const targetPos = cellWorld(ax, ay, az);
+  aimCameraAtPreview(ax, ay, az, piece);   // 置く場所がよく見える向きへカメラを動かす
   const ghost = makePieceGroup(piece);
   ghost.traverse((o) => {
     if (o.isMesh && o.material) {
       o.material.transparent = true;
-      o.material.opacity = 0.85;
-      o.material.emissiveIntensity = 0.5;
+      o.material.opacity = 0.9;
+      o.material.emissive.setHex(SOL_GLOW_EMISSIVE);
+      o.material.emissiveIntensity = 0.85;
       o.material.depthWrite = false;
+      o.material.depthTest = false;        // 既存ブロックを通り抜けて手前に見せる
       o.material.needsUpdate = true;
+      o.renderOrder = 900;
       o.add(new THREE.LineSegments(
         cubeEdgeGeo,
-        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false })
       ));
     }
   });
@@ -1243,7 +1217,7 @@ function flyInPiece(step, onDone) {
 function commitSolutionStep(piece, [ax, ay, az]) {
   board.place(piece.cells, ax, ay, az);
   piece.cells.forEach(([dx, dy, dz], k) => {
-    addBlockMesh(ax + dx, ay + dy, az + dz, piece.color, piece.finish, k * 0.02);
+    addBlockMesh(ax + dx, ay + dy, az + dz, piece.color, piece.finish, k * 0.02, false, true);
   });
   sfx.place();
   const groups = board.completedGroups(mode.clear);
@@ -1253,8 +1227,8 @@ function commitSolutionStep(piece, [ax, ay, az]) {
 function finishSurrender() {
   if (solveTimer) { clearTimeout(solveTimer); solveTimer = null; }
   $("btnSolveDone").classList.remove("show");
-  hidePreviewHint();
-  $("btnXray").classList.remove("on");
+  clearSolutionGlow();
+  setXrayBtnVisible(true);           // すきまボタンを元に戻す
   countScore = true;
   state = "over";
   clearSolutionGhosts();
@@ -1484,9 +1458,9 @@ $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
 $("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
 $("btnGoHomeOver").addEventListener("click", () => { sfx.ui(); overToHome(); });
 $("btnXray").addEventListener("click", () => {
+  if (state === "solving") return;   // プレビュー中は無効(ボタンは隠している)
   sfx.ui();
-  if (state === "solving") togglePreviewStyle();   // プレビュー中は外枠⇄通常を切替
-  else setXray(!xrayOn);                            // 通常プレー中はすきま表示
+  setXray(!xrayOn);                  // 通常プレー中はすきま表示
 });
 $("btnSolveDone").addEventListener("click", () => { sfx.ui(); finishSurrender(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
@@ -1613,6 +1587,14 @@ function tick() {
 
   // すきまマーカーのパルス
   if (xrayOn) markerMat.emissiveIntensity = 0.85 + 0.4 * Math.sin(t * 5);
+
+  // プレビューで置かれた発光ブロックのパルス
+  if (solutionPlacedMeshes.length) {
+    const glow = 0.9 + 0.4 * Math.sin(t * 5);
+    for (const m of solutionPlacedMeshes) {
+      if (m.parent) m.material.emissiveIntensity = glow;   // 消去済みは触らない
+    }
+  }
 
   // 描画: メイン → トレイ3枠
   renderer.setScissorTest(false);
