@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX } from "./config.js";
+import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX, APP_VERSION } from "./config.js";
 import { generatePiece } from "./shapes.js";
 import { dealHand } from "./dealer.js";
 import { Board } from "./board.js";
@@ -1191,6 +1191,7 @@ function refreshTitleBests() {
 }
 $("best").textContent = best;
 refreshTitleBests();
+$("appVersion").textContent = "v" + APP_VERSION;
 
 // ---------------------------------------------------------------- メインループ
 

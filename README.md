@@ -77,6 +77,13 @@ GitHub Pages なら: リポジトリの Settings → Pages → Branch にこの�
 > GitHub Pages は HTTPS なのでそのまま有効。ファイルを更新したら `sw.js` の
 > `VERSION` を上げるとキャッシュが更新される。
 
+## バージョン
+
+アプリのバージョンは [`js/config.js`](js/config.js) の `APP_VERSION` が唯一の基準で、
+タイトル画面の右下に「v◯.◯」と表示される。**マージ(リリース)のたびに +0.1** し、
+同時に `sw.js` の `VERSION`(キャッシュ名)も同じ番号へ更新してキャッシュを入れ替える。
+現在は **1.0**。
+
 ## オンライン世界ランキングを有効にする(約5分)
 
 ランキングは Firebase Realtime Database の REST API を SDK なしで直接使います。
