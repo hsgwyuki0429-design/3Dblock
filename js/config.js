@@ -1,7 +1,7 @@
 // ========================== 3Dblocks 設定 ==========================
 
 // アプリのバージョン (マージのたびに +0.1)
-export const APP_VERSION = "1.1";
+export const APP_VERSION = "1.2";
 
 // グリッドの一辺 (既定)
 export const GRID_N = 5;

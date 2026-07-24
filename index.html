@@ -87,6 +87,12 @@
 
 <div id="comboToast"></div>
 <div id="popLayer"></div>
+<button id="btnSolveDone">結果へ →</button>
+
+<!-- 降参して最適解を見るボタン (左下) -->
+<button id="btnSolve" class="fab" aria-label="降参して最適解を見る">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4c3-1.5 6 1.5 9 0 2-1 3.5-.8 5 0v9c-1.5-.8-3-1-5 0-3 1.5-6-1.5-9 0"/></svg>
+</button>
 
 <!-- すきま可視化ボタン (右下) -->
 <button id="btnXray" class="fab" aria-label="すきまを見る">
@@ -140,6 +146,16 @@
     </div>
     <div id="rankList" class="ranklist"><div class="rank-note">読み込み中…</div></div>
     <button class="btn primary ov-close" data-close="ovRank">とじる</button>
+  </div>
+</div>
+
+<!-- 降参の確認 -->
+<div class="ov" id="ovSurrender">
+  <div class="ov-inner panel">
+    <h2 class="panel-title">降参する?</h2>
+    <p class="ob-text">最適解(手持ち3つを置き切る置き方)を見せて、このゲームを終了します。</p>
+    <button id="btnDoSurrender" class="btn primary big">最適解を見て終了</button>
+    <button class="btn ghost ov-close" data-close="ovSurrender">もどる</button>
   </div>
 </div>
 

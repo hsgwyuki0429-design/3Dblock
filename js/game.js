@@ -6,7 +6,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX, APP_VERSION } from "./config.js";
 import { generatePiece } from "./shapes.js";
-import { dealHand } from "./dealer.js";
+import { dealHand, solveHand } from "./dealer.js";
 import { Board } from "./board.js";
 import { initAudio, setMuted, sfx } from "./audio.js";
 import {
@@ -43,6 +43,7 @@ let runStartBest = best;               // このラン開始時点のベスト (
 let combo = 0;                         // 連続クリア数
 let shake = 0;                         // 消去時のカメラシェイク量
 let mustSave = false;                  // ベスト更新時: 記録するまで再プレイ不可
+let surrendered = false;               // 降参で終了したか
 let submitted = false;
 
 // カメラ軌道 (目標値へ毎フレーム減衰追従)
@@ -415,12 +416,11 @@ function layoutTray() {
   const label = $("trayLabel");
   label.style.top = (y - 20) + "px";
 
-  // すきま可視化ボタンをトレイの右上に配置
+  // トレイ上部の左右にフローティングボタンを配置
   const xb = $("btnXray");
-  if (xb) {
-    xb.style.right = "16px";
-    xb.style.top = (y - 60) + "px";
-  }
+  if (xb) { xb.style.right = "16px"; xb.style.top = (y - 60) + "px"; }
+  const sb = $("btnSolve");
+  if (sb) { sb.style.left = "16px"; sb.style.top = (y - 60) + "px"; }
 }
 
 function envSafeBottom() {
@@ -920,10 +920,12 @@ function startGame(modeKey = mode.key) {
   }
   blockMeshes.clear();
   cancelHeld();
+  clearSolutionGhosts();
   setXray(false);   // 新しいゲームはすきま表示オフから
   score = 0;
   combo = 0;
   submitted = false;
+  surrendered = false;
   $("score").textContent = "0";
   $("best").textContent = best;
   refillHand();
@@ -937,10 +939,94 @@ function startGame(modeKey = mode.key) {
 function goHome() {
   if (state !== "play") return;
   cancelHeld();
+  clearSolutionGhosts();
   state = "title";
   document.body.classList.remove("playing");
   refreshTitleBests();
   showOverlay("ovTitle");
+}
+
+// ---- 降参して最適解を見せる ----
+let solutionGhosts = [];
+let solveTimer = null;
+
+function clearSolutionGhosts() {
+  for (const g of solutionGhosts) {
+    scene.remove(g);
+    disposeGroup(g);
+  }
+  solutionGhosts = [];
+  if (solveTimer) { clearTimeout(solveTimer); solveTimer = null; }
+  const sd = $("btnSolveDone");
+  if (sd) sd.classList.remove("show");
+}
+
+function ghostPopIn(group, delay) {
+  let t = -delay;
+  group.visible = false;
+  return (dt) => {
+    t += dt;
+    if (t < 0) return true;
+    group.visible = true;
+    const k = Math.min(t / 0.3, 1);
+    const s = 1 + 0.25 * Math.sin(k * Math.PI) - 0.99 * (1 - k) * (1 - k);
+    group.scale.setScalar(Math.max(0.01, s));
+    if (k >= 1) { group.scale.setScalar(1); return false; }
+    return true;
+  };
+}
+
+/** 降参: 手札を置き切る手順(最適解)をゴーストで示し、ゲーム終了へ */
+function surrender() {
+  if (state !== "play") return;
+  cancelHeld();
+  clearSolutionGhosts();
+
+  const sol = solveHand(board, hand);
+
+  // 解の各ピースを最終位置に配置したときの盤面を作り、ゴーストを置いて元に戻す
+  const applied = [];
+  for (const step of sol) {
+    board.place(step.piece.cells, ...step.pos);
+    applied.push(step);
+  }
+  sol.forEach((step, i) => {
+    const g = makePieceGroup(step.piece);   // 実色のブロック
+    g.position.copy(cellWorld(step.pos[0], step.pos[1], step.pos[2]));
+    const meshes = [];
+    g.traverse((o) => { if (o.isMesh) meshes.push(o); });
+    for (const m of meshes) {
+      m.material.transparent = true;
+      m.material.opacity = 0.72;
+      m.material.emissiveIntensity = 0.6;
+      m.material.depthWrite = false;
+      m.material.needsUpdate = true;
+      m.add(new THREE.LineSegments(   // 白い輪郭で解の形をくっきり
+        cubeEdgeGeo,
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
+      ));
+    }
+    scene.add(g);
+    solutionGhosts.push(g);
+    anims.push(ghostPopIn(g, 0.35 * i));   // 置く順に現れる
+  });
+  for (let i = applied.length - 1; i >= 0; i--) {
+    board.unplace(applied[i].piece.cells, ...applied[i].pos);
+  }
+
+  showToast(sol.length >= hand.filter(Boolean).length
+    ? "最適解はこちら" : "ここまで置けた");
+  state = "over";
+  surrendered = true;
+  $("btnSolveDone").classList.add("show");   // 好きなだけ眺めてから結果へ
+  if (solveTimer) clearTimeout(solveTimer);
+  solveTimer = setTimeout(finishSurrender, 15000);   // 放置時の保険
+}
+
+function finishSurrender() {
+  if (solveTimer) { clearTimeout(solveTimer); solveTimer = null; }
+  $("btnSolveDone").classList.remove("show");
+  showGameOver();
 }
 
 function checkGameOver() {
@@ -960,7 +1046,7 @@ function showGameOver() {
   sfx.over();
   const isNewBest = score > 0 && score > runStartBest;
   mustSave = isNewBest;   // ベスト更新時は記録するまで「もういちど」不可
-  $("overMode").textContent = `${mode.label}モード`;
+  $("overMode").textContent = surrendered ? `降参 · ${mode.label}モード` : `${mode.label}モード`;
   $("overScore").textContent = score;
   $("overBestNote").textContent = isNewBest ? "自己ベスト更新" : "";
   $("submitResult").textContent = isNewBest
@@ -1148,6 +1234,17 @@ $("btnStartPlane").addEventListener("click", () => { sfx.ui(); initAudio(); star
 $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
 $("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
 $("btnXray").addEventListener("click", () => { sfx.ui(); setXray(!xrayOn); });
+$("btnSolve").addEventListener("click", () => {
+  if (state !== "play") return;
+  sfx.ui();
+  showOverlay("ovSurrender");
+});
+$("btnDoSurrender").addEventListener("click", () => {
+  sfx.ui();
+  hideOverlay("ovSurrender");
+  surrender();
+});
+$("btnSolveDone").addEventListener("click", () => { sfx.ui(); finishSurrender(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 $("btnHelp").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 function openRanking() {
@@ -1331,4 +1428,6 @@ window.__tsumi = {
   litCount: () => (held ? held.litMeshes.length : 0),
   setXray: (on) => setXray(on),
   markerCount: () => xrayGroup.children.length,
+  surrender: () => surrender(),
+  solutionCount: () => solutionGhosts.length,
 };

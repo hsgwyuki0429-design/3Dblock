@@ -137,7 +137,25 @@ body:not(.playing) #hudBtns { pointer-events: none; }
   background: #f6b73c; color: #3a2600; border-color: #f6b73c;
   box-shadow: 0 4px 18px rgba(246, 183, 60, 0.6);
 }
-body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
+body:not(.playing) #btnXray,
+body:not(.playing) #btnSolve { opacity: 0; pointer-events: none; }
+
+/* 降参ソリューション表示中の「結果へ」ボタン */
+#btnSolveDone {
+  position: fixed; z-index: 6;
+  top: calc(env(safe-area-inset-top, 0px) + 76px);
+  left: 50%; transform: translateX(-50%);
+  border: none; border-radius: 999px;
+  padding: 12px 26px;
+  font-family: var(--font); font-weight: 600; font-size: 15px;
+  color: #fff; background: var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 113, 227, 0.5);
+  cursor: pointer;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+#btnSolveDone.show { opacity: 1; pointer-events: auto; }
+#btnSolveDone:active { transform: translateX(-50%) scale(0.96); }
 
 #hudBtns { display: flex; gap: 10px; pointer-events: auto; }
 .iconbtn {

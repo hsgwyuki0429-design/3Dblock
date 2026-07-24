@@ -200,3 +200,38 @@ function shuffle(arr) {
   }
   return arr;
 }
+
+/**
+ * 現在の手札(残っているピース)を置き切る手順を1つ探して返す。
+ * 全部置ける解があればそれを、無ければ「最も多く置ける」部分解を返す。
+ * @returns {{piece, pos:[x,y,z]}[]}  置く順の配列 (現在の盤面に順に place できる)
+ */
+export function solveHand(board, pieces) {
+  const live = pieces.filter(Boolean);
+  let best = [];
+  const dfs = (rem, path) => {
+    if (path.length > best.length) best = path.slice();
+    if (rem.length === 0) return true;      // 完全解
+    for (let i = 0; i < rem.length; i++) {
+      const p = rem[i];
+      const pl = board.allPlacements(p.cells);
+      if (!pl.length) continue;
+      for (const pos of pl) pos._k = pos[1] * 100 + Math.random() * 30;
+      pl.sort((a, b) => a._k - b._k);
+      const rest = rem.filter((_, j) => j !== i);
+      const cap = Math.min(pl.length, BRANCH_CAP);
+      for (let k = 0; k < cap; k++) {
+        const pos = pl[k];
+        board.place(p.cells, pos[0], pos[1], pos[2]);
+        path.push({ piece: p, pos: [pos[0], pos[1], pos[2]] });
+        const full = dfs(rest, path);
+        board.unplace(p.cells, pos[0], pos[1], pos[2]);
+        path.pop();
+        if (full) return true;
+      }
+    }
+    return false;
+  };
+  dfs(live, []);
+  return best;
+}
