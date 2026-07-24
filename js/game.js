@@ -353,6 +353,18 @@ function setXray(on) {
   if (btn) btn.classList.toggle("on", on);
 }
 
+// 解プレビュー用: 元々埋まっていたブロックを半透明の白基調にする(空欄は何も出さない)
+function whitenSolutionBlocks() {
+  for (const mesh of blockMeshes.values()) {
+    const m = mesh.material;
+    m.color.setHex(0xffffff);
+    m.emissive.setHex(0xffffff);
+    m.emissiveIntensity = 0.06;
+    m.transparent = true; m.opacity = XRAY_OPACITY; m.depthWrite = false;
+    m.needsUpdate = true;
+  }
+}
+
 function popIn(mesh, delay) {
   let t = -delay;
   return (dt) => {
@@ -1072,6 +1084,7 @@ function clearSolutionGhosts() {
 function showLossSolution() {
   cancelHeld();
   clearSolutionGhosts();
+  if (xrayOn) setXray(false);        // すきま表示(金の空欄)は出さない
 
   const snap = dealSnapshot;
   const pieces = snap ? snap.pieces.filter(Boolean) : [];
@@ -1089,6 +1102,7 @@ function showLossSolution() {
   for (let i = 0; i < 3; i++) { hand[i] = null; setTrayPiece(i, null); }
   const realScore = score;
   countScore = false;                // 再生中は加点しない(演出だけ本物)
+  whitenSolutionBlocks();            // 元々埋まってたブロックを半透明の白基調に
   showToast("こう置けば続けられた");
   playSolution(sol, 0, realScore);
 }
@@ -1102,7 +1116,7 @@ function playSolution(sol, i, realScore) {
     return;
   }
   flyInPiece(sol[i], () => {
-    solveTimer = setTimeout(() => playSolution(sol, i + 1, realScore), 470);
+    solveTimer = setTimeout(() => playSolution(sol, i + 1, realScore), 940);   // 0.5倍速
   });
 }
 
@@ -1110,6 +1124,7 @@ function playSolution(sol, i, realScore) {
 function loopSolution(sol, realScore) {
   if (state !== "solving") return;
   if (dealSnapshot) restoreBoardFromBlocks(dealSnapshot.blocks);
+  whitenSolutionBlocks();            // ループ再生でも白基調を維持
   playSolution(sol, 0, realScore);
 }
 
@@ -1136,7 +1151,7 @@ function flyInPiece(step, onDone) {
   ghost.position.copy(start);
   scene.add(ghost);
   solutionGhosts.push(ghost);
-  let t = 0; const dur = 0.5;
+  let t = 0; const dur = 1.0;   // 0.5倍速(従来0.5秒→1.0秒でゆっくり降りる)
   anims.push((dt) => {
     t += dt;
     const k = Math.min(t / dur, 1);
