@@ -139,6 +139,29 @@ body:not(.playing) #hudBtns { pointer-events: none; }
 }
 body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
 
+/* すきまボタンの説明 吹き出し (初回のみ) */
+.xhint {
+  position: fixed; z-index: 7;
+  transform: translateY(-50%) scale(0.96);
+  max-width: 190px;
+  background: var(--accent); color: #fff;
+  font-family: var(--font); font-weight: 600; font-size: 13px; line-height: 1.5;
+  text-align: left;
+  padding: 10px 13px;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 113, 227, 0.4);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.3s ease, transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.xhint::after {
+  content: ""; position: absolute;
+  right: -7px; top: 50%; transform: translateY(-50%);
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 8px solid var(--accent);
+}
+.xhint.show { opacity: 1; transform: translateY(-50%) scale(1); }
+
 /* 降参ソリューション表示中の「結果へ」ボタン */
 #btnSolveDone {
   position: fixed; z-index: 6;
