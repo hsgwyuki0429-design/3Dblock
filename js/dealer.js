@@ -7,20 +7,21 @@
 //  3. 3つとも場に出た時点で「3つ全部を置き切れる手順が最低1つ存在する」ことを
 //     解探索で保証する (最適手順を見つければ詰まない)
 
-const CANDIDATES = 16;   // 1回のディールで生成する候補ピース数
+const CANDIDATES = 18;   // 1回のディールで生成する候補ピース数
 const BRANCH_CAP = 8;    // 解探索の枝刈り (1手あたり試す配置数)
 const NO_FIT = -1e9;     // どこにも置けないピース
+const JACKPOT_PROB = 0.13;  // たまに「大きく消せる」ご褒美の組を配る
 
 /**
- * @param board 現在の盤面 (Board)
- * @param clear "line" | "plane"
- * @param makePiece ピースを1つ乱数生成する関数
- * @returns 3ピースの配列
+ * その場面で欲しいピースを勘ぐって3つ配る。
+ *  - 基本は「よく合う1つ + 中くらい + ワイルド」構成で、簡単すぎない塩梅
+ *  - たまに(盤面が埋まっているほど確率↑)大消しできる組を配ってご褒美に
+ *  - どの組も「3つとも置き切れる手順」を解探索で保証(詰み防止)
  */
 export function dealHand(board, clear, makePiece) {
   const groups = collectGroups(board, clear);
+  const filledRatio = countFilled(board) / board.cells.length;
 
-  // 候補を2ラウンドまで生成し、「3つとも置き切れる」組を確実に探す
   for (let round = 0; round < 2; round++) {
     const cands = [];
     for (let i = 0; i < CANDIDATES; i++) {
@@ -30,43 +31,58 @@ export function dealHand(board, clear, makePiece) {
     }
     const placeable = cands.filter((p) => p.fit > NO_FIT);
     placeable.sort((a, b) => b.fit - a.fit);   // はまり具合の良い順
+
+    // ご褒美: たまに大消しできる組 (埋まっているほど出やすい)
+    if (Math.random() < JACKPOT_PROB * (0.4 + filledRatio)) {
+      const jp = findJackpotTrio(board, clear, placeable);
+      if (jp) return shuffle(jp);
+    }
+
     const trio = findSolvableTrio(board, placeable);
     if (trio) return shuffle(trio);
-
-    // 解ける組が無くても、置けるのが3つ以上あるならそれで妥協 (最終ラウンド)
-    if (round === 1 && placeable.length >= 3) {
-      return shuffle(placeable.slice(0, 3));
-    }
+    if (round === 1 && placeable.length >= 3) return shuffle(placeable.slice(0, 3));
   }
 
-  // ほぼ満杯: 置けるものだけかき集める (ここに来たら実質ゲームオーバー間近)
+  // ほぼ満杯: 置けるものだけかき集める (実質ゲームオーバー間近)
   const last = [];
   for (let i = 0; i < CANDIDATES && last.length < 3; i++) last.push(makePiece());
   return last;
 }
 
+function countFilled(board) {
+  let n = 0;
+  for (let i = 0; i < board.cells.length; i++) n += board.cells[i];
+  return n;
+}
+
 /**
- * 置ける候補の中から「3つとも順に置き切れる」組を探す。
- * まず はまり具合の良いピースを含む組を優先し(気持ちよさ)、
- * 見つからなければ総当りで解ける組を探す(詰み防止の保証)。
+ * 「よく合う1つ + それ以外2つ」で解ける組を探す。
+ * 3つとも上位(good)の組は避けて、簡単すぎない塩梅にする。
+ * 見つからなければ総当りで解ける組を返す(詰み防止の保証)。
  */
 function findSolvableTrio(board, placeable) {
-  if (placeable.length < 3) return null;
-  const M = Math.min(placeable.length, 12);   // 上位12個を対象
+  const P = placeable.length;
+  if (P < 3) return null;
+  const M = Math.min(P, 12);
+  const goodMax = Math.min(3, M);   // 上位3つを "good" 帯とみなす
   let checked = 0;
 
-  // pass1: 最上位(はまりの良い)ピースを必ず1つ含む組を優先
-  const withTop = [];
-  for (let a = 1; a < M; a++)
-    for (let b = a + 1; b < M; b++) withTop.push([0, a, b]);
-  shuffle(withTop);
-  for (const [i, j, k] of withTop) {
-    if (checked++ > 70) break;
+  // pass A: good を1つ含み、残り2つのうち少なくとも1つは good 以外
+  const combosA = [];
+  for (let g = 0; g < goodMax; g++)
+    for (let a = g + 1; a < M; a++)
+      for (let b = a + 1; b < M; b++) {
+        if (a < goodMax && b < goodMax) continue;   // good 3つは避ける(簡単すぎ)
+        combosA.push([g, a, b]);
+      }
+  shuffle(combosA);
+  for (const [i, j, k] of combosA) {
+    if (checked++ > 90) break;
     const trio = [placeable[i], placeable[j], placeable[k]];
     if (isSolvable(board, trio)) return trio;
   }
 
-  // pass2: 上位12個の総当り
+  // pass B (保証): 上位12個の総当り
   const all = [];
   for (let i = 0; i < M; i++)
     for (let j = i + 1; j < M; j++)
@@ -74,11 +90,63 @@ function findSolvableTrio(board, placeable) {
   shuffle(all);
   checked = 0;
   for (const [i, j, k] of all) {
-    if (checked++ > 140) break;
+    if (checked++ > 150) break;
     const trio = [placeable[i], placeable[j], placeable[k]];
     if (isSolvable(board, trio)) return trio;
   }
   return null;
+}
+
+/** 大消し(面まるごと / 複数ライン)できる解ける組を探す */
+function findJackpotTrio(board, clear, placeable) {
+  const M = Math.min(placeable.length, 10);
+  if (M < 3) return null;
+  const n = board.n;
+  const threshold = clear === "plane" ? n * n : n * 2;   // 面1枚 or 2ライン相当以上
+  let best = null, bestClear = threshold - 1, tries = 0;
+  const combos = [];
+  for (let i = 0; i < M; i++)
+    for (let j = i + 1; j < M; j++)
+      for (let k = j + 1; k < M; k++) combos.push([i, j, k]);
+  shuffle(combos);
+  for (const [i, j, k] of combos) {
+    if (tries++ > 40) break;
+    const trio = [placeable[i], placeable[j], placeable[k]];
+    if (!isSolvable(board, trio)) continue;
+    const cc = evalTrioClears(board, clear, trio);
+    if (cc > bestClear) { bestClear = cc; best = trio; if (cc >= n * n) break; }
+  }
+  return best;
+}
+
+/** trio を貪欲に(最も消える置き方で)置いたときの合計消去マス数。盤面は元に戻す */
+function evalTrioClears(board, clear, trio) {
+  const snap = board.cells.slice();
+  let cleared = 0, ok = true;
+  for (const p of trio) {
+    const pls = board.allPlacements(p.cells);
+    if (!pls.length) { ok = false; break; }
+    let bestPos = pls[0], bestCC = -1;
+    for (const pos of pls) {
+      board.place(p.cells, pos[0], pos[1], pos[2]);
+      const cc = countClearCells(board, clear);
+      board.unplace(p.cells, pos[0], pos[1], pos[2]);
+      if (cc > bestCC) { bestCC = cc; bestPos = pos; }
+    }
+    board.place(p.cells, bestPos[0], bestPos[1], bestPos[2]);
+    const groups = board.completedGroups(clear);
+    if (groups.length) cleared += board.clearLines(groups).length;
+  }
+  board.cells.set(snap);
+  return ok ? cleared : -1;
+}
+
+function countClearCells(board, clear) {
+  const groups = board.completedGroups(clear);
+  if (!groups.length) return 0;
+  const seen = new Set();
+  for (const g of groups) for (const c of g.cells) seen.add(board.idx(c[0], c[1], c[2]));
+  return seen.size;
 }
 
 // ---- グループ (ライン/面) の充填状況 ----
@@ -172,16 +240,16 @@ function placementScore(board, groups, piece, ax, ay, az) {
     if (y > 0 && !board.get(x, y - 1, z) && !own.has(board.idx(x, y - 1, z))) s -= 0.7;
   }
 
-  // 完成間近のグループへの貢献を重視 (r=充填率)
+  // 完成間近のグループへの貢献を強めに評価 (r=充填率)
   for (const [gid, g] of gain) {
     const gr = groups.list[gid];
     const r = gr.filled / gr.size;
-    s += g * r * r * 3;
-    if (gr.filled + g === gr.size) s += gr.size * 1.2;   // そのまま完成する
+    s += g * r * r * 4;
+    if (gr.filled + g === gr.size) s += gr.size * 1.9;   // そのまま完成する = 加点
   }
 
   s -= ay * 0.1;              // 低い場所を好む
-  s += Math.random() * 1.5;   // 毎回同じ配給にならないよう揺らぎ
+  s += Math.random() * 1.0;   // 毎回同じ配給にならないよう揺らぎ (控えめ)
   return s;
 }
 
