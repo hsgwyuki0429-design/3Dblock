@@ -54,7 +54,7 @@ const cam = {
   az: -0.65, pol: 1.05, r: N * 3.4,
   tAz: -0.65, tPol: 1.05, tR: N * 3.4,
 };
-const POL_MIN = 0.32, POL_MAX = 1.42;
+const POL_MIN = 0.16, POL_MAX = 2.86;   // ほぼ真上〜真下近くまで(下側からも覗ける)
 let R_MIN = N * 2.0, R_MAX = N * 6.0;
 
 // 入力
@@ -76,7 +76,7 @@ let trayTopY = Infinity;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.autoClear = false;
@@ -88,10 +88,10 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.05).texture;
 scene.environment = envTex;
 
-// 柔らかいスタジオライティング (Apple製品ショット風)
-scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
-keyLight.position.set(5, 12, 6);
+// ダーク舞台で宝石色が映えるライティング
+scene.add(new THREE.AmbientLight(0xaab4d0, 0.55));
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
+keyLight.position.set(5, 13, 6);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(2048, 2048);
 keyLight.shadow.camera.left = keyLight.shadow.camera.bottom = -N * 1.6;
@@ -100,10 +100,13 @@ keyLight.shadow.camera.far = 40;
 keyLight.shadow.bias = -0.0015;
 keyLight.shadow.radius = 4;
 scene.add(keyLight);
-// 反対側からの控えめなフィルライト (影を柔らかく持ち上げる)
-const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
 fillLight.position.set(-7, 5, -4);
 scene.add(fillLight);
+// ネオンの薄いリム(ティール)で夜のアーケード感
+const rimLight = new THREE.DirectionalLight(0x2dd4bf, 0.5);
+rimLight.position.set(-6, 3, -7);
+scene.add(rimLight);
 
 const blocksGroup = new THREE.Group();
 const fxGroup = new THREE.Group();
@@ -124,15 +127,13 @@ const LIT_COLOR = 0xffd76a;
 const LIT_EMISSIVE = 0xffab00;
 
 // ---- すきま可視化 (X-ray) ----
-const XRAY_OPACITY = 0.15;            // ON時のブロック透明度
-const FACE_NB = [
-  [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
-];
+// ON: 埋まってるブロックは白基調で薄く、空いてるマスは全部 金色の半透明で示す
+const XRAY_OPACITY = 0.22;           // ON時のブロック透明度(白)
 const markerGeo = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 4, 0.1);   // 通常ブロックと同じ大きさ
 const markerMat = new THREE.MeshStandardMaterial({
   color: LIT_COLOR, emissive: LIT_EMISSIVE, emissiveIntensity: 0.95,
   roughness: 0.3, metalness: 0.0,
-  transparent: true, opacity: 0.92, depthWrite: true,
+  transparent: true, opacity: 0.4, depthWrite: false,
 });
 let xrayOn = false;
 
@@ -201,12 +202,12 @@ function makePieceGroup(piece, ghost = false) {
       m = new THREE.Mesh(
         cubeGeo,
         new THREE.MeshBasicMaterial({
-          color: 0x0a84ff, transparent: true, opacity: 0.18, depthWrite: false,
+          color: 0x2dd4bf, transparent: true, opacity: 0.22, depthWrite: false,
         })
       );
       const e = new THREE.LineSegments(
         cubeEdgeGeo,
-        new THREE.LineBasicMaterial({ color: 0x0a84ff, transparent: true, opacity: 0.7 })
+        new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.8 })
       );
       m.add(e);
     } else {
@@ -248,17 +249,17 @@ function buildStage() {
     disposeObj3D(c);
   }
 
-  // 床プレート (マットな明るいグレー、柔らかい接地影を受ける)
+  // 床プレート (ダークスレート、柔らかい接地影を受ける)
   const plateGeo = new RoundedBoxGeometry(N + 0.7, 0.2, N + 0.7, 4, 0.08);
   const plateMat = new THREE.MeshStandardMaterial({
-    color: 0xf0f0f3, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.3,
+    color: 0x1b2130, roughness: 0.72, metalness: 0.2, envMapIntensity: 0.5,
   });
   floorPlate = new THREE.Mesh(plateGeo, plateMat);
   floorPlate.position.y = -0.1;
   floorPlate.receiveShadow = true;
   stageGroup.add(floorPlate);
 
-  // 床グリッド線 (薄いヘアライン)
+  // 床グリッド線
   const pts = [];
   for (let i = 0; i <= N; i++) {
     pts.push(i - OFF - 0.5, 0.005, -OFF - 0.5, i - OFF - 0.5, 0.005, N - OFF - 0.5);
@@ -268,16 +269,37 @@ function buildStage() {
   gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
   stageGroup.add(new THREE.LineSegments(
     gridGeo,
-    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.9 })
+    new THREE.LineBasicMaterial({ color: 0x3b4660, transparent: true, opacity: 0.6 })
   ));
 
-  // 外枠ケージ (立体の範囲を示す極薄ライン)
+  // 外枠ケージ
   const cage = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(N, N, N)),
-    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.5 })
+    new THREE.LineBasicMaterial({ color: 0x3b4660, transparent: true, opacity: 0.45 })
   );
   cage.position.y = N / 2;
   stageGroup.add(cage);
+
+  // 床下のティールなグロー
+  const glowCanvas = document.createElement("canvas");
+  glowCanvas.width = glowCanvas.height = 256;
+  const gctx = glowCanvas.getContext("2d");
+  const grad = gctx.createRadialGradient(128, 128, 8, 128, 128, 128);
+  grad.addColorStop(0, "rgba(45,212,191,0.35)");
+  grad.addColorStop(0.55, "rgba(56,189,248,0.12)");
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  gctx.fillStyle = grad;
+  gctx.fillRect(0, 0, 256, 256);
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(N * 2.6, N * 2.6),
+    new THREE.MeshBasicMaterial({
+      map: new THREE.CanvasTexture(glowCanvas), transparent: true,
+      depthWrite: false, blending: THREE.AdditiveBlending,
+    })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = -0.24;
+  stageGroup.add(glow);
 }
 
 // N(=モードのグリッドサイズ)を切り替え、盤面・舞台・カメラ距離を作り直す
@@ -314,14 +336,25 @@ function addBlockMesh(x, y, z, color, finish, delay = 0, instant = false) {
 }
 
 // ---- すきま可視化 ----
+// ON: 埋まってるブロックを白基調・半透明に。OFF: 元の色へ戻す
 function applyXray(mesh) {
   const m = mesh.material;
-  if (xrayOn) { m.transparent = true; m.opacity = XRAY_OPACITY; m.depthWrite = false; }
-  else { m.transparent = false; m.opacity = 1; m.depthWrite = true; }
+  if (xrayOn) {
+    m.color.setHex(0xffffff);
+    m.emissive.setHex(0xffffff);
+    m.emissiveIntensity = 0.06;
+    m.transparent = true; m.opacity = XRAY_OPACITY; m.depthWrite = false;
+  } else {
+    const c = PALETTE[mesh.userData.ci] ?? PALETTE[0];
+    m.color.setHex(c.base);
+    m.emissive.setHex(c.emissive);
+    m.emissiveIntensity = BASE_EMISSIVE;
+    m.transparent = false; m.opacity = 1; m.depthWrite = true;
+  }
   m.needsUpdate = true;   // transparent フラグ変更は再コンパイルが必要
 }
 
-// 囲まれた(=見えにくい)空きマスに金マーカーを立てる
+// 空いているマスを「全部」金色(半透明)で示す
 function refreshXrayMarkers() {
   while (xrayGroup.children.length) xrayGroup.children.pop();  // geo/mat は共有なので破棄しない
   if (!xrayOn) return;
@@ -330,16 +363,9 @@ function refreshXrayMarkers() {
     for (let y = 0; y < n; y++)
       for (let z = 0; z < n; z++) {
         if (board.get(x, y, z)) continue;
-        let occ = 0;
-        for (const [dx, dy, dz] of FACE_NB) {
-          const px = x + dx, py = y + dy, pz = z + dz;
-          if (board.inBounds(px, py, pz) && board.get(px, py, pz)) occ++;
-        }
-        if (occ >= 3) {   // 半分以上ブロックに囲まれた空きマス
-          const mk = new THREE.Mesh(markerGeo, markerMat);
-          cellWorld(x, y, z, mk.position);
-          xrayGroup.add(mk);
-        }
+        const mk = new THREE.Mesh(markerGeo, markerMat);
+        cellWorld(x, y, z, mk.position);
+        xrayGroup.add(mk);
       }
 }
 
@@ -1034,45 +1060,6 @@ function resumeGame(d) {
   saveGame();
 }
 
-/** 詰み救済(LINE共有と引き換え): 詰んだ盤面に戻し、上のブロックを消して続行 */
-function revive() {
-  if (overSnapshot) {
-    restoreBoardFromBlocks(overSnapshot.blocks);
-    score = overSnapshot.score;
-    $("score").textContent = score;
-  }
-  const cutoff = Math.ceil(N / 2);   // y >= cutoff を消して場所を空ける
-  for (let y = N - 1; y >= cutoff; y--)
-    for (let x = 0; x < N; x++)
-      for (let z = 0; z < N; z++) {
-        if (!board.get(x, y, z)) continue;
-        board.set(x, y, z, 0);
-        const idx = board.idx(x, y, z);
-        const mesh = blockMeshes.get(idx);
-        if (mesh) { blockMeshes.delete(idx); anims.push(vanish(mesh, 0)); }
-      }
-  shake = 1.0;
-  sfx.clear(2);
-  hideOverlay("ovOver");
-  mustSave = false;
-  surrendered = false;
-  countScore = true;
-  setGameOverButtons(true);
-  refillHand();
-  document.body.classList.add("playing");
-  state = "play";
-  saveGame();
-}
-
-/** LINEで共有して続きから */
-function shareAndRevive() {
-  const url = location.origin + location.pathname;
-  const text = "これおもろい\n" + url;
-  const lineUrl = "https://line.me/R/msg/text/?" + encodeURIComponent(text);
-  try { window.open(lineUrl, "_blank"); } catch { location.href = lineUrl; }
-  revive();
-}
-
 function updateContinueButton() {
   const btn = $("btnContinue");
   if (!btn) return;
@@ -1133,17 +1120,21 @@ function showLossSolution() {
 function playSolution(sol, i, realScore) {
   if (state !== "solving") return;
   if (i >= sol.length) {
-    countScore = true;
-    score = realScore;
-    $("score").textContent = score;
-    $("btnSolveDone").classList.add("show");   // 好きなだけ眺めてから結果へ
+    $("btnSolveDone").classList.add("show");   // いつでも結果へ行ける
     if (solveTimer) clearTimeout(solveTimer);
-    solveTimer = setTimeout(finishSurrender, 20000);
+    solveTimer = setTimeout(() => loopSolution(sol, realScore), 1400);   // ループ再生
     return;
   }
   flyInPiece(sol[i], () => {
     solveTimer = setTimeout(() => playSolution(sol, i + 1, realScore), 470);
   });
+}
+
+/** 解の再生をループ: 配給時点へ戻して最初から流し直す */
+function loopSolution(sol, realScore) {
+  if (state !== "solving") return;
+  if (dealSnapshot) restoreBoardFromBlocks(dealSnapshot.blocks);
+  playSolution(sol, 0, realScore);
 }
 
 /** 1ピースを上空から目標位置へ滑らせ、着地で本当に配置する(消去演出も本物) */
@@ -1249,7 +1240,6 @@ function showGameOver() {
   $("btnSubmit").style.opacity = 1;
   $("nameInput").value = store.get("name", "");
   $("btnSubmit").textContent = isOnlineEnabled() ? "世界に記録する" : "記録する";
-  $("btnShareContinue").style.display = "";   // 詰み救済は常に出す
   showOverlay("ovOver");
 }
 
@@ -1430,7 +1420,6 @@ $("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
 $("btnGoHomeOver").addEventListener("click", () => { sfx.ui(); overToHome(); });
 $("btnXray").addEventListener("click", () => { sfx.ui(); setXray(!xrayOn); });
 $("btnSolveDone").addEventListener("click", () => { sfx.ui(); finishSurrender(); });
-$("btnShareContinue").addEventListener("click", () => { sfx.ui(); shareAndRevive(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 $("btnHelp").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 function openRanking() {
