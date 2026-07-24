@@ -1,7 +1,7 @@
 // ========================== 3Dblocks 設定 ==========================
 
 // アプリのバージョン (マージのたびに +0.1)
-export const APP_VERSION = "1.5";
+export const APP_VERSION = "1.6";
 
 // グリッドの一辺 (既定)
 export const GRID_N = 5;
@@ -28,16 +28,15 @@ export const RANKING = {
 };
 
 // ピースの配色パレット。各ピースはここから1色を持つ (base=面色 / emissive=発光 / edge=輪郭)
-// v1.5: モダンな宝石トーンに刷新 (ダーク背景で映える)
 export const PALETTE = [
-  { base: 0xff6b6b, emissive: 0x8f2626, edge: 0xffd4d4 },  // コーラル
-  { base: 0xfbbf24, emissive: 0x8a5a06, edge: 0xffe9b0 },  // アンバー
-  { base: 0xa3e635, emissive: 0x4d7c0f, edge: 0xe6ffb0 },  // ライム
-  { base: 0x34d399, emissive: 0x0e6b49, edge: 0xc0ffe6 },  // エメラルド
-  { base: 0x2dd4bf, emissive: 0x0c6b61, edge: 0xbdf7ef },  // ティール
-  { base: 0x38bdf8, emissive: 0x0a6591, edge: 0xc7ecff },  // スカイ
-  { base: 0x818cf8, emissive: 0x3438a0, edge: 0xdcdfff },  // インディゴ
-  { base: 0xe879f9, emissive: 0x8a1c9e, edge: 0xf7d4ff },  // フクシア
+  { base: 0xff3b6b, emissive: 0xb3103f, edge: 0xffd0dc },  // レッドピンク
+  { base: 0xff8a2b, emissive: 0xb34d00, edge: 0xffe0c0 },  // オレンジ
+  { base: 0xffd23e, emissive: 0xb38600, edge: 0xfff2c0 },  // ゴールド
+  { base: 0x35d86b, emissive: 0x0f9e42, edge: 0xc6ffd8 },  // グリーン
+  { base: 0x26d3e6, emissive: 0x0a95a6, edge: 0xc6f6ff },  // シアン
+  { base: 0x3b82ff, emissive: 0x0f47c2, edge: 0xcfe0ff },  // ブルー
+  { base: 0x9b6bff, emissive: 0x5f2fd6, edge: 0xe2d6ff },  // パープル
+  { base: 0xff5bd0, emissive: 0xc21797, edge: 0xffd6f4 },  // マゼンタ
 ];
 
 // スコア (8×8×8 は1列8マスと重いので消去報酬を高めに)
