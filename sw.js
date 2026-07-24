@@ -1,10 +1,10 @@
 // 3Dblocks サービスワーカー: ホーム画面追加(インストール)対応 + シェルのオフラインキャッシュ
-const VERSION = "3dblocks-v1";
+const VERSION = "3dblocks-v2";
 const SHELL = [
   "./", "./index.html", "./manifest.json",
   "./css/style.css",
   "./js/main.js", "./js/game.js", "./js/board.js", "./js/shapes.js",
-  "./js/config.js", "./js/audio.js", "./js/ranking.js",
+  "./js/config.js", "./js/audio.js", "./js/ranking.js", "./js/dealer.js",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-180.png", "./icons/favicon-32.png",
 ];
 

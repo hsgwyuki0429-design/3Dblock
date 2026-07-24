@@ -71,6 +71,11 @@ export class Board {
     for (const [dx, dy, dz] of cells) this.set(ax + dx, ay + dy, az + dz, 1);
   }
 
+  /** place の取り消し (手札ディーラーの解探索用) */
+  unplace(cells, ax, ay, az) {
+    for (const [dx, dy, dz] of cells) this.set(ax + dx, ay + dy, az + dz, 0);
+  }
+
   /**
    * 完成しているラインを列挙する。
    * @returns {{axis:number, fixed:number[], cells:number[][]}[]}
