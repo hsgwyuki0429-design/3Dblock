@@ -76,7 +76,7 @@ let trayTopY = Infinity;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
+renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.autoClear = false;
@@ -88,10 +88,10 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.05).texture;
 scene.environment = envTex;
 
-// ダーク舞台で宝石色が映えるライティング
-scene.add(new THREE.AmbientLight(0xaab4d0, 0.55));
-const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
-keyLight.position.set(5, 13, 6);
+// 柔らかいスタジオライティング (Apple製品ショット風)
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
+keyLight.position.set(5, 12, 6);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(2048, 2048);
 keyLight.shadow.camera.left = keyLight.shadow.camera.bottom = -N * 1.6;
@@ -100,13 +100,10 @@ keyLight.shadow.camera.far = 40;
 keyLight.shadow.bias = -0.0015;
 keyLight.shadow.radius = 4;
 scene.add(keyLight);
-const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+// 反対側からの控えめなフィルライト (影を柔らかく持ち上げる)
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
 fillLight.position.set(-7, 5, -4);
 scene.add(fillLight);
-// ネオンの薄いリム(ティール)で夜のアーケード感
-const rimLight = new THREE.DirectionalLight(0x2dd4bf, 0.5);
-rimLight.position.set(-6, 3, -7);
-scene.add(rimLight);
 
 const blocksGroup = new THREE.Group();
 const fxGroup = new THREE.Group();
@@ -202,12 +199,12 @@ function makePieceGroup(piece, ghost = false) {
       m = new THREE.Mesh(
         cubeGeo,
         new THREE.MeshBasicMaterial({
-          color: 0x2dd4bf, transparent: true, opacity: 0.22, depthWrite: false,
+          color: 0x0a84ff, transparent: true, opacity: 0.18, depthWrite: false,
         })
       );
       const e = new THREE.LineSegments(
         cubeEdgeGeo,
-        new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.8 })
+        new THREE.LineBasicMaterial({ color: 0x0a84ff, transparent: true, opacity: 0.7 })
       );
       m.add(e);
     } else {
@@ -249,17 +246,17 @@ function buildStage() {
     disposeObj3D(c);
   }
 
-  // 床プレート (ダークスレート、柔らかい接地影を受ける)
+  // 床プレート (マットな明るいグレー、柔らかい接地影を受ける)
   const plateGeo = new RoundedBoxGeometry(N + 0.7, 0.2, N + 0.7, 4, 0.08);
   const plateMat = new THREE.MeshStandardMaterial({
-    color: 0x1b2130, roughness: 0.72, metalness: 0.2, envMapIntensity: 0.5,
+    color: 0xf0f0f3, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.3,
   });
   floorPlate = new THREE.Mesh(plateGeo, plateMat);
   floorPlate.position.y = -0.1;
   floorPlate.receiveShadow = true;
   stageGroup.add(floorPlate);
 
-  // 床グリッド線
+  // 床グリッド線 (薄いヘアライン)
   const pts = [];
   for (let i = 0; i <= N; i++) {
     pts.push(i - OFF - 0.5, 0.005, -OFF - 0.5, i - OFF - 0.5, 0.005, N - OFF - 0.5);
@@ -269,37 +266,16 @@ function buildStage() {
   gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
   stageGroup.add(new THREE.LineSegments(
     gridGeo,
-    new THREE.LineBasicMaterial({ color: 0x3b4660, transparent: true, opacity: 0.6 })
+    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.9 })
   ));
 
-  // 外枠ケージ
+  // 外枠ケージ (立体の範囲を示す極薄ライン)
   const cage = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(N, N, N)),
-    new THREE.LineBasicMaterial({ color: 0x3b4660, transparent: true, opacity: 0.45 })
+    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.5 })
   );
   cage.position.y = N / 2;
   stageGroup.add(cage);
-
-  // 床下のティールなグロー
-  const glowCanvas = document.createElement("canvas");
-  glowCanvas.width = glowCanvas.height = 256;
-  const gctx = glowCanvas.getContext("2d");
-  const grad = gctx.createRadialGradient(128, 128, 8, 128, 128, 128);
-  grad.addColorStop(0, "rgba(45,212,191,0.35)");
-  grad.addColorStop(0.55, "rgba(56,189,248,0.12)");
-  grad.addColorStop(1, "rgba(0,0,0,0)");
-  gctx.fillStyle = grad;
-  gctx.fillRect(0, 0, 256, 256);
-  const glow = new THREE.Mesh(
-    new THREE.PlaneGeometry(N * 2.6, N * 2.6),
-    new THREE.MeshBasicMaterial({
-      map: new THREE.CanvasTexture(glowCanvas), transparent: true,
-      depthWrite: false, blending: THREE.AdditiveBlending,
-    })
-  );
-  glow.rotation.x = -Math.PI / 2;
-  glow.position.y = -0.24;
-  stageGroup.add(glow);
 }
 
 // N(=モードのグリッドサイズ)を切り替え、盤面・舞台・カメラ距離を作り直す

@@ -1,15 +1,13 @@
-/* 3Dblocks — theme: ダーク・ティール (宝石色のブロックが映えるミニマル) */
+/* 3Dblocks — theme: シングルブルー基調のミニマル (Apple風) */
 
 :root {
-  --ink: #eef1f7;
-  --sub: #98a2b8;
-  --hair: rgba(255, 255, 255, 0.12);
-  --accent: #2dd4bf;
-  --accent-press: #16b8a3;
-  --accent-tint: rgba(45, 212, 191, 0.16);
-  --surface: rgba(30, 37, 54, 0.72);
-  --panel: #1a2132;
-  --elev: #232c40;
+  --ink: #1d1d1f;
+  --sub: #6e6e73;
+  --hair: rgba(0, 0, 0, 0.10);
+  --accent: #0071e3;
+  --accent-press: #0060c8;
+  --accent-tint: rgba(0, 113, 227, 0.10);
+  --surface: rgba(255, 255, 255, 0.72);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
           "Inter", "Hiragino Kaku Gothic ProN", "Hiragino Sans",
           "Noto Sans JP", system-ui, sans-serif;
@@ -32,14 +30,13 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   background:
-    radial-gradient(120% 90% at 50% -8%, rgba(45, 212, 191, 0.10) 0%, transparent 46%),
-    radial-gradient(100% 100% at 50% 8%, #141b29 0%, #0d1220 55%, #080b13 100%);
-  background-color: #0a0d16;
+    radial-gradient(120% 100% at 50% -10%, #ffffff 0%, #f5f5f7 52%, #ececf0 100%);
+  background-color: #f5f5f7;
 }
 
 #vignette {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background: radial-gradient(100% 82% at 50% 42%, transparent 62%, rgba(0, 0, 0, 0.42) 100%);
+  background: radial-gradient(100% 82% at 50% 42%, transparent 72%, rgba(0, 0, 0, 0.045) 100%);
 }
 
 canvas#gl {
@@ -57,7 +54,7 @@ canvas#gl {
   border-radius: 22px;
   background: var(--surface);
   border: 1px solid var(--hair);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.07);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s;
@@ -150,8 +147,8 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   border: none; border-radius: 999px;
   padding: 12px 26px;
   font-family: var(--font); font-weight: 600; font-size: 15px;
-  color: #04211d; background: var(--accent);
-  box-shadow: 0 6px 20px rgba(45, 212, 191, 0.5);
+  color: #fff; background: var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 113, 227, 0.5);
   cursor: pointer;
   opacity: 0; pointer-events: none;
   transition: opacity 0.3s ease;
@@ -173,7 +170,7 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   display: grid; place-items: center;
 }
 .iconbtn svg { width: 19px; height: 19px; display: block; }
-.iconbtn:active { transform: scale(0.9); background: var(--elev); }
+.iconbtn:active { transform: scale(0.9); background: #ececf0; }
 
 /* ---- トースト / 加点ポップ ---- */
 #comboToast {
@@ -185,7 +182,7 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   font-size: clamp(28px, 8vw, 42px);
   letter-spacing: -0.01em;
   color: var(--accent);
-  text-shadow: 0 1px 18px rgba(45, 212, 191, 0.55);
+  text-shadow: 0 1px 14px rgba(255, 255, 255, 0.9);
   opacity: 0;
   pointer-events: none;
   white-space: nowrap;
@@ -207,7 +204,7 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   font-weight: 600;
   font-size: 19px;
   color: var(--accent);
-  text-shadow: 0 1px 10px rgba(45, 212, 191, 0.5);
+  text-shadow: 0 1px 8px rgba(255, 255, 255, 0.9);
   animation: popfly 0.95s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 @keyframes popfly {
@@ -221,7 +218,7 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   position: fixed; inset: 0; z-index: 10;
   display: flex; align-items: center; justify-content: center;
   padding: 22px;
-  background: rgba(8, 11, 19, 0.62);
+  background: rgba(245, 245, 247, 0.55);
   backdrop-filter: blur(20px) saturate(1.1);
   -webkit-backdrop-filter: blur(20px) saturate(1.1);
   opacity: 0; pointer-events: none;
@@ -239,12 +236,11 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
 .ov.show .ov-inner { transform: none; }
 
 .panel {
-  background:
-    linear-gradient(180deg, var(--elev) 0%, var(--panel) 100%);
+  background: #ffffff;
   border: 1px solid var(--hair);
   border-radius: 28px;
   padding: 30px 24px calc(24px + env(safe-area-inset-bottom, 0px));
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.16);
 }
 .panel-title {
   font-size: 21px; font-weight: 600; letter-spacing: -0.01em;
@@ -305,7 +301,7 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
 .btn + .btn { margin-top: 10px; }
 .btn[disabled] { opacity: 0.35; pointer-events: none; }
 .btn.primary {
-  color: #04211d;
+  color: #fff;
   background: var(--accent);
 }
 .btn.primary:active { transform: scale(0.98); background: var(--accent-press); }
@@ -321,8 +317,8 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   font-variant-numeric: tabular-nums;
 }
 .btn.modebtn .mb-sub b { font-weight: 700; }
-.btn.modebtn.alt { background: var(--elev); color: var(--ink); border: 1px solid var(--hair); }
-.btn.modebtn.alt:active { background: #2c374f; }
+.btn.modebtn.alt { background: var(--ink); }
+.btn.modebtn.alt:active { background: #000; }
 .btn.modebtn.continue { background: #12b76a; }   /* つづきから = 緑 */
 .btn.modebtn.continue:active { background: #0e9457; }
 
@@ -351,7 +347,7 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
 .btn.ghost:active { background: var(--accent-tint); }
 .btn.small {
   width: auto; padding: 12px 20px; font-size: 15px; border-radius: 12px;
-  color: #04211d;
+  color: #fff;
   background: var(--accent);
 }
 .btn.small:active { transform: scale(0.98); background: var(--accent-press); }
@@ -378,7 +374,7 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
 /* ---- ランキング (iOSセグメント風タブ) ---- */
 .tabs {
   display: flex; gap: 2px;
-  background: rgba(0, 0, 0, 0.28);
+  background: #f0f0f3;
   border-radius: 11px; padding: 3px;
   margin-bottom: 16px;
 }
@@ -393,8 +389,8 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
 }
 .tab.active {
   opacity: 1; font-weight: 600;
-  background: var(--elev);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .ranklist {
@@ -449,14 +445,14 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   flex: 1; min-width: 0;
   border-radius: 12px;
   border: 1px solid var(--hair);
-  background: rgba(0, 0, 0, 0.28);
+  background: #fff;
   color: var(--ink);
   font-family: var(--font); font-weight: 400; font-size: 16px;
   padding: 12px 14px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.namebox input::placeholder { color: var(--sub); opacity: 0.7; }
+.namebox input::placeholder { color: #a9a9ad; }
 .namebox input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
 .submit-result {
   min-height: 30px; padding: 8px 0 10px; font-size: 13px; font-weight: 500;
