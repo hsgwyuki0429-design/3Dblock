@@ -6,6 +6,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX } from "./config.js";
 import { generatePiece } from "./shapes.js";
+import { dealHand } from "./dealer.js";
 import { Board } from "./board.js";
 import { initAudio, setMuted, sfx } from "./audio.js";
 import {
@@ -38,7 +39,10 @@ let state = "title";                   // title | play | over
 const hand = [null, null, null];       // 手持ち3ピース
 let score = 0;
 let best = getBest(mode.key);
+let runStartBest = best;               // このラン開始時点のベスト (更新判定用)
 let combo = 0;                         // 連続クリア数
+let shake = 0;                         // 消去時のカメラシェイク量
+let mustSave = false;                  // ベスト更新時: 記録するまで再プレイ不可
 let submitted = false;
 
 // カメラ軌道 (目標値へ毎フレーム減衰追従)
@@ -110,21 +114,61 @@ const cubeEdgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(CUBE, CUBE, CU
 const BASE_EMISSIVE = 0.14;   // ほぼマット。基調は明るいライトなので発光は控えめ
 const CLEAR_EMISSIVE = 0.7;   // 消去予告のときだけ軽く持ち上げる
 
-// ブロックだけがカラフル。マットな色プラスチック (角丸+柔らかい影) の質感は共通
-function makeBlockMaterial(color) {
-  return new THREE.MeshStandardMaterial({
+// 消える予告のハイライト色 (どのパレット色よりも明るい金)
+const LIT_COLOR = 0xffd76a;
+const LIT_EMISSIVE = 0xffab00;
+
+// ---- ブロックの質感バリエーション ----
+// plain=マット / gloss=つやつやキャンディ / stripe=細い斜めストライプ / dots=ドット
+function makePatternTexture(draw) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d");
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, 128, 128);
+  draw(g);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+const stripeTex = makePatternTexture((g) => {
+  g.strokeStyle = "rgba(0,0,0,0.10)";
+  g.lineWidth = 7;
+  for (let i = -128; i < 256; i += 26) {
+    g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 128, 128); g.stroke();
+  }
+});
+const dotsTex = makePatternTexture((g) => {
+  g.fillStyle = "rgba(0,0,0,0.10)";
+  for (let y = 16; y < 128; y += 32)
+    for (let x = 16; x < 128; x += 32) {
+      g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill();
+    }
+});
+const FINISHES = ["plain", "plain", "gloss", "gloss", "stripe", "dots"];
+function pickFinish() {
+  return FINISHES[Math.floor(Math.random() * FINISHES.length)];
+}
+
+function makeBlockMaterial(color, finish = "plain") {
+  const opt = {
     color: color.base,
     emissive: color.emissive,
     emissiveIntensity: BASE_EMISSIVE,
     roughness: 0.42,
     metalness: 0.0,
     envMapIntensity: 0.75,
-  });
+  };
+  if (finish === "gloss") { opt.roughness = 0.14; opt.envMapIntensity = 1.2; }
+  else if (finish === "stripe") { opt.map = stripeTex; }
+  else if (finish === "dots") { opt.map = dotsTex; }
+  return new THREE.MeshStandardMaterial(opt);
 }
 
 /** 1ブロック。角丸の隙間と柔らかい影で隣接キューブが分かれるのでワイヤーは付けない */
-function makeCube(color) {
-  const mesh = new THREE.Mesh(cubeGeo, makeBlockMaterial(color));
+function makeCube(color, finish) {
+  const mesh = new THREE.Mesh(cubeGeo, makeBlockMaterial(color, finish));
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
@@ -148,7 +192,7 @@ function makePieceGroup(piece, ghost = false) {
       );
       m.add(e);
     } else {
-      m = makeCube(piece.color);
+      m = makeCube(piece.color, piece.finish);
     }
     m.position.set(dx, dy, dz);
     g.add(m);
@@ -239,8 +283,8 @@ configureForN(N);
 
 const blockMeshes = new Map();         // board idx -> mesh
 
-function addBlockMesh(x, y, z, color, delay = 0) {
-  const mesh = makeCube(color);
+function addBlockMesh(x, y, z, color, finish, delay = 0) {
+  const mesh = makeCube(color, finish);
   cellWorld(x, y, z, mesh.position);
   mesh.scale.setScalar(0.01);
   blocksGroup.add(mesh);
@@ -348,9 +392,13 @@ function pickColor() {
 }
 
 function refillHand() {
+  // ディーラーが場面に合わせて3つ選ぶ (3つ置き切れる手順の存在を可能な限り保証)
+  const pieces = dealHand(board, mode.clear, () =>
+    generatePiece(N, Math.random, mode.maxCells));
   for (let i = 0; i < 3; i++) {
-    const p = generatePiece(N, Math.random, mode.maxCells);
+    const p = pieces[i];
     p.color = pickColor();
+    p.finish = pickFinish();
     hand[i] = p;
     setTrayPiece(i, hand[i]);
   }
@@ -447,14 +495,22 @@ function updateDrag(cx, cy) {
   }
 }
 
+/** 消去予告ハイライトを元の色に戻す */
+function restoreLit(h) {
+  for (const r of h.litMeshes) {
+    r.mesh.material.color.setHex(r.color);
+    r.mesh.material.emissive.setHex(r.emissive);
+    r.mesh.material.emissiveIntensity = BASE_EMISSIVE;
+  }
+  h.litMeshes = [];
+}
+
 function setSnap(p) {
   const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
   if (same(held.snapped, p)) return;
-  // 消去予告のハイライトを戻す
-  for (const m of held.litMeshes) m.material.emissiveIntensity = BASE_EMISSIVE;
-  held.litMeshes = [];
+  restoreLit(held);
   held.snapped = p;
-  if (!p) { held.ghost.visible = false; return; }
+  if (!p) { held.ghost.visible = false; held.clearing = false; return; }
 
   held.ghost.visible = true;
   cellWorld(p[0], p[1], p[2], held.ghost.position);
@@ -462,10 +518,23 @@ function setSnap(p) {
   const clearing = held.wouldClear.length > 0;
   held.clearing = clearing;   // tick 側で仮ピースの点滅を強める
   if (clearing) {
-    for (const line of held.wouldClear) {
-      for (const [x, y, z] of line.cells) {
-        const m = blockMeshes.get(board.idx(x, y, z));
-        if (m) { m.material.emissiveIntensity = CLEAR_EMISSIVE; held.litMeshes.push(m); }
+    // 消える面・列のブロックを金色に変えて場所を予告する
+    const seen = new Set();
+    for (const group of held.wouldClear) {
+      for (const [x, y, z] of group.cells) {
+        const idx = board.idx(x, y, z);
+        if (seen.has(idx)) continue;
+        seen.add(idx);
+        const m = blockMeshes.get(idx);
+        if (!m) continue;
+        held.litMeshes.push({
+          mesh: m,
+          color: m.material.color.getHex(),
+          emissive: m.material.emissive.getHex(),
+        });
+        m.material.color.setHex(LIT_COLOR);
+        m.material.emissive.setHex(LIT_EMISSIVE);
+        m.material.emissiveIntensity = CLEAR_EMISSIVE;
       }
     }
     if (navigator.vibrate) navigator.vibrate(8);
@@ -477,7 +546,7 @@ function drop() {
   const h = held;
   held = null;
   trayCards[h.slot].classList.remove("cancel-hint");
-  for (const m of h.litMeshes) m.material.emissiveIntensity = BASE_EMISSIVE;
+  restoreLit(h);
   scene.remove(h.group, h.ghost);
   disposeGroup(h.group);
   disposeGroup(h.ghost);
@@ -491,13 +560,30 @@ function drop() {
   }
 }
 
+/** ドラッグ中ピースを手持ちへ戻す (ホームへ戻る時など) */
+function cancelHeld() {
+  if (!held) return;
+  const h = held;
+  held = null;
+  trayCards[h.slot].classList.remove("cancel-hint");
+  restoreLit(h);
+  scene.remove(h.group, h.ghost);
+  disposeGroup(h.group);
+  disposeGroup(h.ghost);
+  hand[h.slot] = h.piece;
+  setTrayPiece(h.slot, h.piece);
+}
+
 // ---------------------------------------------------------------- 配置と消去
 
 function commitPlacement(slot, piece, [ax, ay, az]) {
   board.place(piece.cells, ax, ay, az);
+  const placedCells = piece.cells.map(([dx, dy, dz]) => [ax + dx, ay + dy, az + dz]);
   piece.cells.forEach(([dx, dy, dz], i) => {
-    addBlockMesh(ax + dx, ay + dy, az + dz, piece.color, i * 0.02);
+    addBlockMesh(ax + dx, ay + dy, az + dz, piece.color, piece.finish, i * 0.02);
   });
+  // 設置の小さなパフ
+  spawnBurst(placedCells, { per: 2, size: 0.16, life: 0.4, color: piece.color.base, up: 1.6 });
   hand[slot] = null;
   setTrayPiece(slot, null);
   addScore(piece.cells.length * SCORE.perPlacedCell);
@@ -524,24 +610,113 @@ function doClear(groups, nearCell) {
     (combo > 1 ? SCORE.comboBonus * combo : 0);
   addScore(pts);
 
-  // 演出 (控えめ・ミニマル)
+  // 演出
   const unit = mode.clear === "plane" ? "面" : "列";
   const toastText = `${groups.length}${unit}そろえた`;
   showToast(combo > 1 ? `${toastText} · コンボ×${combo}` : toastText);
   spawnScorePop(pts, nearCell);
   sfx.clear(groups.length);
+  shake = Math.min(1.2, 0.45 + groups.length * 0.22);
   if (navigator.vibrate) navigator.vibrate(groups.length > 1 ? [18, 30, 18] : 14);
 
-  // ブロックを上品にスケールアウトさせて消す
   for (const group of groups) {
+    // 消えるグループの形に沿った閃光 (面=シート / 列=ビーム)
+    if (mode.clear === "plane") spawnSheet(group);
+    else spawnBeam(group);
+    spawnRing(group);
+    // ブロックをふくらませて弾く
     group.cells.forEach((cell, i) => {
       const mesh = blockMeshes.get(board.idx(...cell));
       if (!mesh) return;
       blockMeshes.delete(board.idx(...cell));
       anims.push(vanish(mesh, i * 0.03));
     });
-    spawnBurst(group.cells);
+    spawnBurst(group.cells, { per: 7, size: 0.34, life: 0.85 });
   }
+}
+
+// グループの中心座標
+function groupCenter(group, out = new THREE.Vector3()) {
+  out.set(0, 0, 0);
+  const p = new THREE.Vector3();
+  for (const [x, y, z] of group.cells) out.add(cellWorld(x, y, z, p));
+  return out.divideScalar(group.cells.length);
+}
+
+/** 消去時に広がる金色のリング */
+function spawnRing(group) {
+  const center = groupCenter(group);
+  const geo = new THREE.RingGeometry(0.46, 0.56, 48);
+  const mat = new THREE.MeshBasicMaterial({
+    color: LIT_COLOR, transparent: true, opacity: 0.5,
+    side: THREE.DoubleSide, depthWrite: false,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.copy(center);
+  fxGroup.add(m);
+  let t = 0;
+  anims.push((dt) => {
+    t += dt;
+    const k = t / 0.5;
+    m.scale.setScalar(1 + k * N * 0.9);
+    mat.opacity = 0.5 * (1 - k);
+    if (k >= 1) { fxGroup.remove(m); geo.dispose(); mat.dispose(); return false; }
+    return true;
+  });
+}
+
+/** 面消し: 消えたレイヤー全体が一瞬光るシート */
+function spawnSheet(group) {
+  const center = groupCenter(group);
+  const geo = new THREE.PlaneGeometry(N + 0.4, N + 0.4);
+  const mat = new THREE.MeshBasicMaterial({
+    color: LIT_COLOR, transparent: true, opacity: 0.42,
+    side: THREE.DoubleSide, depthWrite: false,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  if (group.axis === 0) m.rotation.y = Math.PI / 2;        // x法線
+  else if (group.axis === 1) m.rotation.x = -Math.PI / 2;  // y法線
+  m.position.copy(center);
+  fxGroup.add(m);
+  let t = 0;
+  anims.push((dt) => {
+    t += dt;
+    const k = t / 0.45;
+    m.scale.setScalar(1 + k * 0.08);
+    mat.opacity = 0.42 * (1 - k);
+    if (k >= 1) { fxGroup.remove(m); geo.dispose(); mat.dispose(); return false; }
+    return true;
+  });
+}
+
+/** 列消し: 消えたラインに沿って走る光のビーム */
+function spawnBeam(group) {
+  const center = groupCenter(group);
+  const len = N + 0.6;
+  const size = [0.55, 0.55, 0.55];
+  size[group.axis] = len;
+  const geo = new THREE.BoxGeometry(size[0], size[1], size[2]);
+  const mat = new THREE.MeshBasicMaterial({
+    color: LIT_COLOR, transparent: true, opacity: 0.5, depthWrite: false,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.copy(center);
+  fxGroup.add(m);
+  let t = 0;
+  anims.push((dt) => {
+    t += dt;
+    const k = t / 0.4;
+    const puff = 1 + k * 1.6;
+    m.scale.set(
+      group.axis === 0 ? 1 : puff,
+      group.axis === 1 ? 1 : puff,
+      group.axis === 2 ? 1 : puff,
+    );
+    mat.opacity = 0.5 * (1 - k);
+    if (k >= 1) { fxGroup.remove(m); geo.dispose(); mat.dispose(); return false; }
+    return true;
+  });
 }
 
 /** 軽くふくらんで持ち上がりながらフェードアウトする消去アニメ */
@@ -585,8 +760,10 @@ const sparkTex = (() => {
   return new THREE.CanvasTexture(c);
 })();
 
-function spawnBurst(cells) {
-  const count = cells.length * 5;
+function spawnBurst(cells, opts = {}) {
+  const per = opts.per ?? 5;
+  const life = opts.life ?? 0.7;
+  const count = cells.length * per;
   const pos = new Float32Array(count * 3);
   const vels = [];
   const p = new THREE.Vector3();
@@ -596,7 +773,7 @@ function spawnBurst(cells) {
     pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
     vels.push(new THREE.Vector3(
       (Math.random() - 0.5) * 3,
-      Math.random() * 3,
+      Math.random() * (opts.up ?? 3),
       (Math.random() - 0.5) * 3,
     ));
   }
@@ -604,8 +781,8 @@ function spawnBurst(cells) {
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   const mat = new THREE.PointsMaterial({
     map: sparkTex,
-    color: PALETTE[Math.floor(Math.random() * PALETTE.length)].base,  // 弾けたブロック由来の色
-    size: 0.3, transparent: true, opacity: 0.9,
+    color: opts.color ?? PALETTE[Math.floor(Math.random() * PALETTE.length)].base,
+    size: opts.size ?? 0.3, transparent: true, opacity: 0.9,
     depthWrite: false, sizeAttenuation: true,
   });
   const points = new THREE.Points(geo, mat);
@@ -669,8 +846,10 @@ function spawnScorePop(pts, cell) {
 // ---------------------------------------------------------------- ゲームフロー
 
 function startGame(modeKey = mode.key) {
+  if (mustSave) return;   // ベスト更新の未記録中は開始不可
   mode = MODES[modeKey] || MODES[DEFAULT_MODE];
   best = getBest(mode.key);
+  runStartBest = best;
   if (N !== mode.grid) configureForN(mode.grid);   // グリッドが変わるモードは舞台ごと作り直し
   else board.clearAll();
 
@@ -679,6 +858,7 @@ function startGame(modeKey = mode.key) {
     m.material.dispose();
   }
   blockMeshes.clear();
+  cancelHeld();
   score = 0;
   combo = 0;
   submitted = false;
@@ -691,6 +871,16 @@ function startGame(modeKey = mode.key) {
   state = "play";
 }
 
+/** プレイ中からタイトルへ戻る */
+function goHome() {
+  if (state !== "play") return;
+  cancelHeld();
+  state = "title";
+  document.body.classList.remove("playing");
+  refreshTitleBests();
+  showOverlay("ovTitle");
+}
+
 function checkGameOver() {
   for (const p of hand) {
     if (p && board.allPlacements(p.cells).length > 0) return;
@@ -699,13 +889,21 @@ function checkGameOver() {
   setTimeout(showGameOver, 650);
 }
 
+function setAgainEnabled(on) {
+  $("btnAgain").disabled = !on;
+}
+
 function showGameOver() {
   document.body.classList.remove("playing");
   sfx.over();
+  const isNewBest = score > 0 && score > runStartBest;
+  mustSave = isNewBest;   // ベスト更新時は記録するまで「もういちど」不可
   $("overMode").textContent = `${mode.label}モード`;
   $("overScore").textContent = score;
-  $("overBestNote").textContent = score >= best && score > 0 ? "自己ベスト更新" : "";
-  $("submitResult").textContent = "";
+  $("overBestNote").textContent = isNewBest ? "自己ベスト更新" : "";
+  $("submitResult").textContent = isNewBest
+    ? "ベスト更新!なまえを記録すると次のゲームへ進めます" : "";
+  setAgainEnabled(!isNewBest);
   $("btnSubmit").disabled = false;
   $("btnSubmit").style.opacity = 1;
   $("nameInput").value = store.get("name", "");
@@ -777,6 +975,11 @@ async function submitScore() {
   btn.style.opacity = 0.5;
 
   const localRank = addLocalRank(name, score, mode.key);
+  // 名前つきで保存できた時点で義務は果たした (オンライン送信失敗でも足止めしない)
+  if (mustSave) {
+    mustSave = false;
+    setAgainEnabled(true);
+  }
   if (!isOnlineEnabled()) {
     $("submitResult").textContent = `この端末の${mode.label}で ${localRank}位に記録しました`;
     return;
@@ -881,6 +1084,7 @@ document.addEventListener("dblclick", (e) => e.preventDefault());
 $("btnStartLine").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("line"); });
 $("btnStartPlane").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("plane"); });
 $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
+$("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
 $("btnHowTitle").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 $("btnHelp").addEventListener("click", () => { sfx.ui(); showOverlay("ovHelp"); });
 function openRanking() {
@@ -959,6 +1163,13 @@ function tick() {
     TARGET.y + cam.r * Math.cos(cam.pol),
     TARGET.z + cam.r * Math.sin(cam.pol) * Math.cos(cam.az),
   );
+  // 消去時の小さなカメラシェイク
+  if (shake > 0) {
+    shake = Math.max(0, shake - dt * 3);
+    const a = shake * shake * 0.14;
+    camera.position.x += (Math.random() - 0.5) * a;
+    camera.position.y += (Math.random() - 0.5) * a;
+  }
   camera.lookAt(TARGET);
 
   // アニメーション
@@ -982,6 +1193,11 @@ function tick() {
       held.ghost.traverse((o) => {
         if (o.isMesh) o.material.opacity = pulse;
       });
+    }
+    // 消える予告ブロックの金色パルス
+    if (held.litMeshes.length) {
+      const glow = CLEAR_EMISSIVE + 0.35 * Math.sin(t * 8);
+      for (const r of held.litMeshes) r.mesh.material.emissiveIntensity = glow;
     }
   }
 
@@ -1031,4 +1247,19 @@ window.__tsumi = {
   },
   placements: (slot) => (hand[slot] ? board.allPlacements(hand[slot].cells) : []),
   checkOver: () => checkGameOver(),
+  refill: () => refillHand(),
+  goHome: () => goHome(),
+  addCell: (x, y, z, ci = 0) => {   // テスト用: メッシュ付きでセルを埋める
+    if (board.get(x, y, z)) return false;
+    board.set(x, y, z, 1);
+    addBlockMesh(x, y, z, PALETTE[ci % PALETTE.length], "plain", 0);
+    return true;
+  },
+  screenOf: (x, y, z) => {          // セルの画面座標(px)
+    const p = cellWorld(x, y, z);
+    p.project(camera);
+    return [(p.x + 1) / 2 * innerWidth, (1 - (p.y + 1) / 2) * innerHeight];
+  },
+  lift: LIFT_PX,
+  litCount: () => (held ? held.litMeshes.length : 0),
 };
