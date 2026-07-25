@@ -28,6 +28,15 @@ const FULLCLEAR = {
   plane: { prob: 0.92, lo: 0.016, hi: 0.208, pool: 26, combos: 26 },   // 残 2〜26マス
 };
 
+// 「完成間近をどれだけ強く狙うか」はモードで最適値が違う。
+//  line : 1列=5マスで頻繁に消えるので、狙いを強くしすぎると盤面が荒れて寿命が縮む
+//  plane: 1面=25マスで滅多に揃わないので、強く狙わないとそもそも消えない
+// (A/B計測: line は弱め・plane は強めが、消去量と1ゲームの長さの両立に良かった)
+const READ = {
+  line:  { done: 1.9, doneR: 0.7, near1: 1.0, near2: 0.4, multi: 7.5 },
+  plane: { done: 1.6, doneR: 1.8, near1: 2.4, near2: 1.1, multi: 8.0 },
+};
+
 const WAYS_CAP = 4;         // 「置き切れる並びの通り数」を数える上限。少ないほど最適解が一意=良い塩梅
 const SOLVABLE_POOL = 5;    // 通り数を比べるために集める「解ける組」の数
 const WAYS_MIN_FILL = 0.33; // これ以上埋まっている時だけ「締まった手(通り数)」を吟味する
@@ -67,11 +76,20 @@ export function dealHand(board, clear, makePiece) {
     if (fc) return markFullClear(shuffle(fc));
   }
 
+  // 盤面が苦しいほど 1 に近づく。読みの重心を「気持ちよさ」から「助け舟」へ寄せる。
+  const pressure = Math.max(0, Math.min(1, (filledRatio - 0.35) / 0.4));
+  // 死に穴の判定はそこそこ重い。スカスカな盤面では死に穴がまず生じないので省く。
+  const checkHoles = filledRatio >= 0.24;
+  const rd = READ[clear] || READ.line;   // 読みの重み(モード別)
+
   for (let round = 0; round < 2; round++) {
     const cands = [];
     for (let i = 0; i < CANDIDATES; i++) {
       const p = makePiece();
-      p.fit = bestFit(board, groups, p);
+      const r = bestFit(board, groups, p, pressure, checkHoles, rd);
+      p.fit = r.fit;
+      p.target = r.target;     // 主に狙えるグループ (3つが同じ所を狙わないように使う)
+      p.spots = r.spots;
       cands.push(p);
     }
     const placeable = cands.filter((p) => p.fit > NO_FIT);
@@ -92,6 +110,16 @@ export function dealHand(board, clear, makePiece) {
   const last = [];
   for (let i = 0; i < CANDIDATES && last.length < 3; i++) last.push(makePiece());
   return last;
+}
+
+/**
+ * 3ピースが「別々の狙い」を持っているか (狙えるグループの種類数)。
+ * 3つとも同じラインを狙う組は、1つ置いた時点で残り2つが用済みになって薄い。
+ */
+function distinctTargets(trio) {
+  const t = new Set();
+  for (const p of trio) if (p.target >= 0) t.add(p.target);
+  return t.size;
 }
 
 /** この手が「全消しチャンス」であることをゲーム側へ伝える目印 */
@@ -135,14 +163,23 @@ function findSolvableTrio(board, placeable, tight) {
     if (checked++ > 90 || opUsed > OP_CAP) break;
     const trio = [placeable[i], placeable[j], placeable[k]];
     if (!isSolvable(board, trio)) continue;
-    if (!tight) return trio;                         // 序盤(スカスカ)は締まり吟味なしで軽く配る
+    if (!tight) {
+      // 序盤(スカスカ)は締まり吟味をしないが、3つが同じ所を狙う組だけは避ける
+      if (distinctTargets(trio) >= 2) return trio;
+      solvable.push({ trio, ways: WAYS_CAP + 1 });
+      if (solvable.length >= SOLVABLE_POOL) break;
+      continue;
+    }
     const ways = countWays(board, trio, WAYS_CAP);
-    if (ways <= 1) return trio;                      // 最適解が一意=最良。即採用
+    if (ways <= 1 && distinctTargets(trio) >= 2) return trio;   // 一意かつ役割が散っている=最良
     solvable.push({ trio, ways });
     if (solvable.length >= SOLVABLE_POOL) break;
   }
   if (solvable.length) {
-    solvable.sort((a, b) => a.ways - b.ways);        // 通り数の少ない=締まった組を優先
+    // 通り数が少ない(締まった)組を優先しつつ、3つが別々の狙いを持つ組を上に置く。
+    // 3つとも同じラインを狙う組は「1つ使ったら残り2つが余る」ので歯応えが薄い。
+    solvable.sort((a, b) =>
+      (a.ways - b.ways) || (distinctTargets(b.trio) - distinctTargets(a.trio)));
     return solvable[0].trio;
   }
 
@@ -654,21 +691,41 @@ function planeCell(axis, f, i, j) {
 
 // ---- ピースの「はまり具合」スコア ----
 
-function bestFit(board, groups, piece) {
+/**
+ * ピースの「その場面での欲しさ」を測る。
+ * 最良の置き方のスコアに加えて、盤面が苦しいときは「置ける場所の多さ(=逃げ道)」も見る。
+ * これで、詰まりかけの場面では融通の利くピースが自然に混ざるようになる。
+ * @param {number} pressure 0=余裕 1=苦しい
+ * @returns {{fit:number, target:number, spots:number}}
+ */
+function bestFit(board, groups, piece, pressure = 0, checkHoles = false, rd = READ.line) {
   const n = board.n;
   const [sx, sy, sz] = piece.span;
-  let best = NO_FIT;
+  let best = NO_FIT, target = -1, spots = 0;
   for (let x = 0; x <= n - sx; x++)
     for (let y = 0; y <= n - sy; y++)
       for (let z = 0; z <= n - sz; z++) {
         if (!board.canPlace(piece.cells, x, y, z)) continue;
-        const s = placementScore(board, groups, piece, x, y, z);
-        if (s > best) best = s;
+        spots++;
+        const r = placementScore(board, groups, piece, x, y, z, checkHoles, rd);
+        if (r.score > best) { best = r.score; target = r.target; }
       }
-  return best;
+  if (best === NO_FIT) return { fit: NO_FIT, target: -1, spots: 0 };
+  // 苦しいほど「置き場所が多いピース」を高く評価する(助け舟。余裕がある時は効かせない)
+  const flex = Math.min(spots, 40) / 40;
+  return { fit: best + pressure * flex * 3.2, target, spots };
 }
 
-function placementScore(board, groups, piece, ax, ay, az) {
+/**
+ * 「この置き方はどれくらい欲しい一手か」を読む。
+ * 単に隙間に合うかではなく、盤面がいま何を必要としているかまで見る:
+ *   - あと少しのライン/面を、残り穴数が少ないものほど強く狙う(=痒い所に手が届く)
+ *   - 一手で複数そろう置き方は特大評価
+ *   - 置いた結果ふさがって二度と埋められなくなる空き(死に穴)を作るなら大きく減点
+ *   - 次の一手のお膳立て(置いた後に「残り1〜2マス」のグループができる)も評価
+ * @returns {{score:number, target:number}} target = 最も貢献したグループid (組の重複回避用)
+ */
+function placementScore(board, groups, piece, ax, ay, az, checkHoles, rd) {
   const own = new Set(piece.cells.map(([dx, dy, dz]) =>
     board.idx(ax + dx, ay + dy, az + dz)));
   const gain = new Map();
@@ -691,19 +748,63 @@ function placementScore(board, groups, piece, ax, ay, az) {
     if (y > 0 && !board.get(x, y - 1, z) && !own.has(board.idx(x, y - 1, z))) s -= 0.7;
   }
 
-  // 完成間近のグループへの貢献を強めに評価 (r=充填率)。より賢く「その場で欲しい一手」を読む。
-  let completes = 0;
+  // 死に穴を作らないか: このピースの周りにできる「まわりを全部ふさがれた空き」を数える。
+  // そういう空きは後から埋められず、盤面をじわじわ殺すので強く避ける。
+  // スカスカな盤面ではまず生じないので、その時は走らせない(配給を軽く保つため)。
+  if (checkHoles) s -= 2.2 * countBuriedHoles(board, piece, own, ax, ay, az);
+
+  // 完成間近のグループへの貢献を評価 (r=充填率)。残り穴が少ないほど「今まさに欲しい」。
+  let completes = 0, target = -1, bestGain = 0;
   for (const [gid, g] of gain) {
     const gr = groups.list[gid];
     const r = gr.filled / gr.size;
-    s += g * r * r * 4.5;                          // 完成間近ほど強く読む
-    if (gr.filled + g === gr.size) { s += gr.size * 2.2; completes++; }  // そのまま完成する = 加点
+    const left = gr.size - gr.filled;             // 完成まであと何マスか
+    s += g * r * r * 4.5;
+    if (g > bestGain) { bestGain = g; target = gid; }
+    if (gr.filled + g === gr.size) {
+      // そのまま完成。あと少しだったものほど「かゆい所に手が届いた」感が強い
+      s += gr.size * (rd.done + rd.doneR * r);
+      completes++;
+    } else {
+      // お膳立て: 置いたあと残り1〜2マスになるなら次の一手が見えて気持ちいい
+      const after = left - g;
+      if (after === 1) s += rd.near1;
+      else if (after === 2) s += rd.near2;
+    }
   }
-  if (completes >= 2) s += 7 * (completes - 1);    // 一手で複数グループ完成=特大の気持ちよさ
+  if (completes >= 2) s += rd.multi * (completes - 1);   // 一手で複数そろう = 特大
 
   s -= ay * 0.12;             // 低い場所を好む
   s += Math.random() * 0.6;   // 毎回同じ配給にならないよう揺らぎ (読みを効かせるため控えめ)
-  return s;
+  return { score: s, target };
+}
+
+/**
+ * ピースを置いたときにできる「まわりを完全にふさがれた空きマス」の数。
+ * ピース周辺だけ見るので軽い。盤面は変更しない(own= これから埋まるマス として扱う)。
+ */
+function countBuriedHoles(board, piece, own, ax, ay, az) {
+  const checked = new Set();
+  let buried = 0;
+  for (const [dx, dy, dz] of piece.cells) {
+    const x = ax + dx, y = ay + dy, z = az + dz;
+    for (const [nx, ny, nz] of NB) {
+      const px = x + nx, py = y + ny, pz = z + nz;
+      if (!board.inBounds(px, py, pz)) continue;
+      const k = board.idx(px, py, pz);
+      if (checked.has(k) || own.has(k) || board.cells[k]) continue;   // 空きだけ見る
+      checked.add(k);
+      let open = 0;
+      for (const [mx, my, mz] of NB) {
+        const qx = px + mx, qy = py + my, qz = pz + mz;
+        if (!board.inBounds(qx, qy, qz)) continue;                    // 壁は塞がり扱い
+        const q = board.idx(qx, qy, qz);
+        if (!board.cells[q] && !own.has(q)) open++;
+      }
+      if (open === 0) buried++;
+    }
+  }
+  return buried;
 }
 
 const NB = [
