@@ -6,7 +6,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX, APP_VERSION } from "./config.js";
 import { generatePiece } from "./shapes.js";
-import { dealHand, solveHand, canClearAll } from "./dealer.js";
+import { dealHand, solveHand, solveHandBest, canClearAll } from "./dealer.js";
 import { Board } from "./board.js";
 import { initAudio, setMuted, sfx } from "./audio.js";
 import {
@@ -540,12 +540,31 @@ function pickColor() {
 }
 
 let dealtFullClear = false;   // 直近の配給が「全消しできる組」だったか
+let clearRun = false;         // 段階的な全消し(クリアラン)の流れに乗っているか
+let runLeft = 0;              // うまく置けば残るブロック数 (進捗表示用)
+let runBestFill = Infinity;   // その流れで到達した最少ブロック数
+let runStale = 0;             // 何手つづけて記録を更新できていないか
 
 function refillHand() {
+  // クリアランの進み具合を見る。減り続けているうちは流れを繋ぎ、
+  // 何手か更新できなくなったら流れを終える(だらだら続いて簡単になりすぎるのを防ぐ)。
+  if (clearRun) {
+    const now = board.cells.reduce((a, b) => a + b, 0);
+    if (now < runBestFill) { runBestFill = now; runStale = 0; }
+    else runStale++;
+    if (runStale > 3) clearRun = false;
+  } else {
+    runBestFill = Infinity;
+    runStale = 0;
+  }
   // ディーラーが場面に合わせて3つ選ぶ (3つ置き切れる手順の存在を保証)
+  // クリアラン中は「置けば確実にブロックが減る手」を続けてもらう
   const pieces = dealHand(board, mode.clear, () =>
-    generatePiece(N, Math.random, mode.maxCells));
+    generatePiece(N, Math.random, mode.maxCells),
+    { runActive: clearRun, allowSetup: clearRun && runStale < 3 });
   dealtFullClear = !!pieces.fullClear;
+  clearRun = !!pieces.clearRun;                       // 減らせる手が尽きたら流れは切れる
+  runLeft = pieces.runLeft ?? (pieces.fullClear ? 0 : 0);
   for (let i = 0; i < 3; i++) {
     const p = pieces[i];
     p.color = pickColor();
@@ -573,8 +592,10 @@ function computeHandPlan() {
   handPlan = new Map();
   const live = hand.filter(Boolean);
   if (!live.length) return;
-  const sol = solveHand(board, live);
-  for (const step of sol) handPlan.set(step.piece, step.pos);
+  // 「置き切れる」だけでなく「いちばん点が高くなる」手順を最適解とする。
+  // = ラインや面がそろってブロックが消える置き所が正解になり、そこで good が出る。
+  const { steps } = solveHandBest(board, mode.clear, live, SCORE, combo);
+  for (const step of steps) handPlan.set(step.piece, step.pos);
 }
 
 /**
@@ -586,10 +607,20 @@ function computeHandPlan() {
  */
 function updateChance(dealtChance = false) {
   const live = hand.filter(Boolean);
+  const alive = state === "play" && live.length > 0 && !board.isEmptyBoard();
   // dealtChance: ディーラーが「全消しできる組」として配った直後。探索し直さずとも確実なので
   //              取りこぼさないようそのまま信じる (配給時点では手札3つ・盤面も未変更)。
-  const on = state === "play" && live.length > 0 && !board.isEmptyBoard()
-    && (dealtChance || canClearAll(board, mode.clear, live));
+  const canEmpty = alive && (dealtChance || canClearAll(board, mode.clear, live));
+  // クリアラン: 1手では空にできないが、この手を置けば確実にブロックが減っていく流れ
+  const running = alive && clearRun && !canEmpty;
+  const on = canEmpty || running;
+
+  if (on) {
+    // 進行中は「あと何個」を出して、空へ向かっているのが分かるようにする
+    $("chanceText").textContent = canEmpty
+      ? "全消しチャンス"
+      : `全消しへ あと${Math.max(runLeft, 1)}個`;
+  }
   if (on === chanceOn) return;
   chanceOn = on;
   document.body.classList.toggle("chance", on);
@@ -603,6 +634,10 @@ function updateChance(dealtChance = false) {
 /** チャンス表示を強制的に消す (ゲーム開始/終了/ホームへ戻る時) */
 function clearChance() {
   chanceOn = false;
+  clearRun = false;
+  runLeft = 0;
+  runBestFill = Infinity;
+  runStale = 0;
   document.body.classList.remove("chance");
   $("chanceBanner").classList.remove("show");
 }
@@ -802,8 +837,20 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
     combo = 0;
   }
 
+  // 盤面がまるごと空になった = 全消し達成。いちばん大きなご褒美として派手に見せる。
+  if (board.isEmptyBoard()) {
+    clearRun = false;
+    runLeft = 0;
+    addScore(SCORE.fullClearBonus);
+    showToast("全消し!");
+    sfx.chance();
+    shake = Math.max(shake, 1.2);
+    if (navigator.vibrate) navigator.vibrate([24, 50, 24, 50, 40]);
+  }
+
   const refilled = handEmpty();
-  if (refilled) refillHand();
+  if (refilled) refillHand();          // refillHand 側で最適解を計算し直す
+  else computeHandPlan();              // 盤面が変わったので残りピースの最適解を引き直す
   if (xrayOn) refreshXrayMarkers();
   // 全消しが狙える状態になった/なくなった を1手ごとに知らせる。
   // 配給直後だけはディーラーの判定をそのまま使う(取りこぼし防止)。
