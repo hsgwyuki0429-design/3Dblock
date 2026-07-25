@@ -18,11 +18,14 @@ const BIGCLEAR_PROB = 0.09; // たまに「大きく消せる」ご褒美(面1�
 
 // 「全消し(盤面まるごと空)」を狙う設定。モード別。
 //  prob = 発火確率 / lo,hi = 狙う盤面充填率の帯 / pool,combos = 発火時の探索の厚み
-//  plane は 面(25マス)まるごと消す必要があり全消しが起きにくいので、発火・探索とも厚めにし、
-//  band 下限も下げて(=より空いた=消しやすい局面も拾って)成功率を上げる。
+//  全消しは「残りブロックを覆う線/面の空きを、ちょうど3ピースで埋められる」時しか成立しない。
+//  計測すると成否は確率ではなく盤面の薄さでほぼ決まる:
+//    残26マス超 → ほぼ0% / 残16マス以下 → 3〜5割 で成立
+//  そこで帯を薄い盤面に絞り、そこでは高確率で狙いにいく。厚い盤面は空振りする上に
+//  探索が重いだけなので、そもそも抽選しない(結果としてリフィルも速くなる)。
 const FULLCLEAR = {
-  line:  { prob: 0.10, lo: 0.18, hi: 0.74, pool: 18, combos: 14 },
-  plane: { prob: 0.32, lo: 0.12, hi: 0.70, pool: 26, combos: 26 },
+  line:  { prob: 0.92, lo: 0.016, hi: 0.132, pool: 26, combos: 26 },   // 残 2〜16マス
+  plane: { prob: 0.92, lo: 0.016, hi: 0.208, pool: 26, combos: 26 },   // 残 2〜26マス
 };
 
 const WAYS_CAP = 4;         // 「置き切れる並びの通り数」を数える上限。少ないほど最適解が一意=良い塩梅
@@ -57,8 +60,11 @@ export function dealHand(board, clear, makePiece) {
   const fcCfg = FULLCLEAR[clear] || FULLCLEAR.line;
   if (filledRatio >= fcCfg.lo && filledRatio <= fcCfg.hi
       && Math.random() < fcCfg.prob) {
+    // まず「狙って構成」する(偶然に頼るより桁違いに当たる)。だめなら従来の抽選。
+    const built = buildClearAllTrio(board, clear, makePiece);
+    if (built) return markFullClear(shuffle(built.slice()));
     const fc = findClearAllTrio(board, clear, makePiece, fcCfg);
-    if (fc) return shuffle(fc);
+    if (fc) return markFullClear(shuffle(fc));
   }
 
   for (let round = 0; round < 2; round++) {
@@ -86,6 +92,12 @@ export function dealHand(board, clear, makePiece) {
   const last = [];
   for (let i = 0; i < CANDIDATES && last.length < 3; i++) last.push(makePiece());
   return last;
+}
+
+/** この手が「全消しチャンス」であることをゲーム側へ伝える目印 */
+function markFullClear(trio) {
+  trio.fullClear = true;
+  return trio;
 }
 
 function countFilled(board) {
@@ -193,6 +205,247 @@ function countWays(board, trio, cap) {
  * 見つかった組は「消しながら置けば盤面が空になる並び」が存在する = 当然置き切れる。
  * 幾何条件が厳しいので大半は null (= このディールでは全消しは出ない)。
  */
+const TILE_POOL = 80;     // 敷き詰め探索に使う候補ピース数(形と向きを広く集める)
+const TILE_MAX_GAP = 22;   // 埋めるべき空きがこれより広いと3ピースでは覆えない
+const TILE_MAX_COVER = 14; // 覆いに使うグループ数の上限(本数より下の gap 量が本質)
+const TILE_NODE_CAP = 9000;   // 「試した置き方」の総数上限 (内側ループ込みの実作業量)
+
+/**
+ * 全消しチャンスを「狙って構成する」。
+ *
+ * ランダムな3ピースが偶然に全消しになる確率は極めて低い(残りブロックを覆うのに
+ * 必要なライン数が3ピースで完成できる本数を超えるため)。そこで逆算する:
+ *   1. 残っているブロックを覆うグループ(ライン/面)の組を貪欲に求める
+ *   2. その中の空きセル = 「ここを埋めれば全部消える」領域 を求める
+ *   3. その領域をちょうど3ピースで敷き詰められる組を探す(最小未被覆セル優先のDFS)
+ *   4. 見つけたら canEmptyBoard で「実際に消しながら空にできる」ことを確認する
+ *      (途中で線が消えて崩れる並びもあるため、最終確認は必須)
+ *
+ * @returns {object[]|null} 全消しできる3ピース
+ */
+function buildClearAllTrio(board, clear, makePiece) {
+  const n = board.n;
+  const filled = [];
+  for (let x = 0; x < n; x++)
+    for (let y = 0; y < n; y++)
+      for (let z = 0; z < n; z++)
+        if (board.get(x, y, z)) filled.push(board.idx(x, y, z));
+  if (!filled.length) return null;
+
+  // グループ(ライン or 面)ごとのセル一覧
+  const groups = [];
+  if (clear === "plane") {
+    for (let axis = 0; axis < 3; axis++)
+      for (let f = 0; f < n; f++) {
+        const cells = [];
+        for (let i = 0; i < n; i++)
+          for (let j = 0; j < n; j++) cells.push(board.idx(...planeCell(axis, f, i, j)));
+        groups.push(cells);
+      }
+  } else {
+    for (let axis = 0; axis < 3; axis++)
+      for (let a = 0; a < n; a++)
+        for (let b = 0; b < n; b++) {
+          const cells = [];
+          for (let i = 0; i < n; i++) cells.push(board.idx(...axisCell(axis, i, a, b)));
+          groups.push(cells);
+        }
+  }
+
+  // 候補ピース(回転違いを広く。形+向きで重複を除く)
+  const pool = [];
+  const seen = new Set();
+  for (let i = 0; i < TILE_POOL; i++) {
+    const p = makePiece();
+    const sig = p.cells.map((c) => c.join(",")).sort().join("|");
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    pool.push(p);
+  }
+  if (pool.length < 3) return null;
+
+  // 覆い方を数通り試す。狙いは「本数を減らす」ことではなく「埋める空きを小さくする」こと。
+  //  → すでにほぼ埋まっている線(足す空きが少ない線)を優先する貪欲。
+  //    ランダムなタイブレークで毎回わずかに違う覆いを試し、別解を狙う。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (opUsed > OP_CAP) break;   // 予算切れ: 全消しは諦めて通常配給へ
+    const need = new Set(filled);
+    const gapSet = new Set();
+    let ok = true;
+    for (let step = 0; need.size && step < TILE_MAX_COVER; step++) {
+      let best = null, bestScore = -Infinity;
+      for (const g of groups) {
+        let gain = 0, add = 0, ySum = 0, yN = 0;
+        for (const k of g) {
+          if (need.has(k)) gain++;
+          else if (!board.cells[k] && !gapSet.has(k)) {
+            add++;
+            ySum += Math.floor(k / n) % n;   // 埋めることになる空きの高さ
+            yN++;
+          }
+        }
+        if (!gain) continue;
+        // 覆える数が多く、新たに埋める空きが少ないほど良い。
+        // さらに空きが低い位置(床や既存ブロックに支えられる所)にあるものを優先する。
+        // 宙に浮いた空きは「支え」の制約で実際には置けず、全消しが成立しないため。
+        const avgY = yN ? ySum / yN : 0;
+        const score = gain / (1 + add) - avgY * 0.35 + Math.random() * 0.15;
+        if (score > bestScore) { bestScore = score; best = g; }
+      }
+      if (!best) { ok = false; break; }
+      for (const k of best) {
+        need.delete(k);
+        if (!board.cells[k]) gapSet.add(k);
+      }
+      if (gapSet.size > TILE_MAX_GAP) { ok = false; break; }   // 埋めきれない
+    }
+    if (!ok || need.size || !gapSet.size || gapSet.size > TILE_MAX_GAP) continue;
+
+    // 空きが4つ以上に分断されていると、連結した3ピースでは埋めきれない(早期棄却)
+    if (countComponents(board, gapSet) > 3) continue;
+
+    // 戦略A: 空きをちょうど3ピースで敷き詰める(きっちり埋まる=確実に全部消える)
+    // 同じ候補が2枠に入ると手札が同一オブジェクトを共有してしまうので必ず複製する
+    const tiled = tileExactly(board, pool, gapSet);
+    if (tiled) {
+      const fresh = tiled.map(clonePiece);
+      if (canEmptyBoard(board, clear, fresh)) return fresh;
+    }
+
+    // 戦略B: 空きの中に収まるピースを集め、その組合せを「消しながら」検証する。
+    // 途中で線が消えれば残りは減るので、きっちり敷き詰めなくても空にできることがある。
+    const fitters = piecesFittingGap(board, pool, gapSet);
+    if (fitters.length >= 3) {
+      const M = Math.min(fitters.length, 9);
+      let tries = 0;
+      for (let i = 0; i < M; i++)
+        for (let j = i + 1; j < M; j++)
+          for (let k = j + 1; k < M; k++) {
+            if (++tries > 8 || opUsed > OP_CAP) break;
+            const cand = [fitters[i], fitters[j], fitters[k]].map(clonePiece);
+            if (canEmptyBoard(board, clear, cand)) return cand;
+          }
+    }
+  }
+  return null;
+}
+
+/** 空き領域が何個の塊に分かれているか (連結成分数) */
+function countComponents(board, gapSet) {
+  const n = board.n;
+  const seen = new Set();
+  let comps = 0;
+  for (const start of gapSet) {
+    if (seen.has(start)) continue;
+    comps++;
+    if (comps > 3) return comps;   // 早期打ち切り
+    const stack = [start];
+    seen.add(start);
+    while (stack.length) {
+      const k = stack.pop();
+      const x = k % n, y = Math.floor(k / n) % n, z = Math.floor(k / (n * n));
+      for (const [dx, dy, dz] of NB) {
+        const px = x + dx, py = y + dy, pz = z + dz;
+        if (!board.inBounds(px, py, pz)) continue;
+        const nk = board.idx(px, py, pz);
+        if (gapSet.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+      }
+    }
+  }
+  return comps;
+}
+
+/**
+ * 空き領域の中にすっぽり収まる置き方がある候補ピースを、埋める量の多い順に集める。
+ * 盤面全体を走査せず「空きセルにピースのどこかを合わせる」だけ試すので軽い。
+ */
+function piecesFittingGap(board, pool, gapSet) {
+  const n = board.n;
+  const gapList = [...gapSet];
+  const out = [];
+  for (const p of pool) {
+    if (p.cells.length > gapSet.size) continue;
+    let fits = false;
+    for (const k of gapList) {
+      if (fits) break;
+      const tx = k % n, ty = Math.floor(k / n) % n, tz = Math.floor(k / (n * n));
+      for (const [ox, oy, oz] of p.cells) {
+        const ax = tx - ox, ay = ty - oy, az = tz - oz;
+        if (ax < 0 || ay < 0 || az < 0) continue;
+        let all = true;
+        for (const [dx, dy, dz] of p.cells) {
+          const x = ax + dx, y = ay + dy, z = az + dz;
+          if (x >= n || y >= n || z >= n || !gapSet.has(board.idx(x, y, z))) { all = false; break; }
+        }
+        if (all) { fits = true; break; }
+      }
+    }
+    if (fits) out.push(p);
+    if (out.length >= 9) break;   // 組合せは上位だけ試すので集めすぎない
+  }
+  out.sort((a, b) => b.cells.length - a.cells.length);   // 大きく埋められるものを先に
+  return out;
+}
+
+function clonePiece(p) {
+  return { cells: p.cells.map((c) => c.slice()), shape: p.shape, span: p.span.slice() };
+}
+
+/**
+ * 空き領域 gapSet を「ちょうど3ピース」で過不足なく敷き詰める組を探す。
+ * 最小の未被覆セルを必ず覆う手だけを試す(exact cover の定石)ので枝が絞れる。
+ * @returns {object[]|null}
+ */
+function tileExactly(board, pool, gapSet) {
+  const n = board.n;
+  const remain = new Set(gapSet);
+  const chosen = [];
+  let nodes = 0;
+
+  const idxToXyz = (k) => [k % n, Math.floor(k / n) % n, Math.floor(k / (n * n))];
+
+  const dfs = () => {
+    // nodes は「試した置き方」を数える。DFS の呼び出し回数だけでは
+    // 候補×合わせ方の内側ループ(数十万回になりうる)を抑えられないため。
+    if (nodes > TILE_NODE_CAP) return false;
+    if (remain.size === 0) return chosen.length === 3;
+    if (chosen.length === 3) return false;
+
+    // 未被覆のうち最小 index のセルを必ず覆う
+    let target = -1;
+    for (const k of remain) if (target < 0 || k < target) target = k;
+    const [tx, ty, tz] = idxToXyz(target);
+
+    for (const p of pool) {
+      if (p.cells.length > remain.size) continue;
+      // ピースのどのセルを target に合わせるか
+      for (const [ox, oy, oz] of p.cells) {
+        if (nodes++ > TILE_NODE_CAP) return false;
+        const ax = tx - ox, ay = ty - oy, az = tz - oz;
+        if (ax < 0 || ay < 0 || az < 0) continue;
+        let fits = true;
+        const ks = [];
+        for (const [dx, dy, dz] of p.cells) {
+          const x = ax + dx, y = ay + dy, z = az + dz;
+          if (x >= n || y >= n || z >= n) { fits = false; break; }
+          const k = board.idx(x, y, z);
+          if (!remain.has(k)) { fits = false; break; }
+          ks.push(k);
+        }
+        if (!fits) continue;
+        for (const k of ks) remain.delete(k);
+        chosen.push(p);
+        if (dfs()) return true;
+        chosen.pop();
+        for (const k of ks) remain.add(k);
+      }
+    }
+    return false;
+  };
+
+  return dfs() ? chosen.slice() : null;
+}
+
 function findClearAllTrio(board, clear, makePiece, cfg) {
   // 全消しは滅多に発火しないご褒美なので、発火時は厚めに候補を用意して成功率を上げる。
   // cfg.pool / cfg.combos で厚みを調整(plane は厚め)。
@@ -233,14 +486,31 @@ function quickClearPotential(board, clear, piece) {
 }
 
 /**
+ * いまの盤面と手持ちで「盤面をまるごと空(全消し)」にできる並びがまだ残っているか。
+ * ゲーム側が「全消しチャンス」の告知を出す/引っ込めるのに使う。
+ * 配給時だけでなく1手ごとに呼べるよう、探索は canEmptyBoard の枝刈り予算内で打ち切る。
+ * (ディーラーが仕込んだチャンスは同じ探索で見つけたものなので、正しく置いている限り
+ *  次の手でも見つかる。置き方を誤ってチャンスが消えたら false になる)
+ * @returns {boolean}
+ */
+export function canClearAll(board, clear, pieces) {
+  const live = pieces.filter(Boolean);
+  if (!live.length || board.isEmptyBoard()) return false;
+  opUsed = 0;   // 単発チェックなので予算をリセットして与える
+  // 配給1回で何度も回す用途より探索を厚くする。ここをケチると
+  // ディーラーが仕込んだチャンスを告知側が取りこぼす(=気づけない)。
+  return canEmptyBoard(board, clear, live, 700);
+}
+
+/**
  * trio を「消しながら」順に置いて、途中または最後に盤面が空になる並びがあるか。
  * ある置き方で完成グループができたら実際に消して先へ進む(全消しは消去必須なので
  * ここだけ消去ありで探索する)。盤面は必ず元へ戻す。
  */
-function canEmptyBoard(board, clear, trio) {
+function canEmptyBoard(board, clear, trio, tryCap = 140) {
   const snap = board.cells.slice();
   let hit = false, tries = 0;
-  const TRY_CAP = 140;
+  const TRY_CAP = tryCap;
   const dfs = (rem) => {
     if (hit || tries > TRY_CAP || opUsed > OP_CAP) return;
     for (let i = 0; i < rem.length; i++) {

@@ -51,6 +51,15 @@ export const sfx = {
     tone(1175, { t: 0.075, dur: 0.16, type: "triangle", vol: 0.26 }); // D6
     tone(1568, { t: 0.075, dur: 0.14, type: "sine", vol: 0.10 });     // 上ハモリ
   },
+  chance() {
+    // 全消しチャンス到来: きらめく上昇アルペジオ (他の効果音より目立たせる)
+    const seq = [659, 880, 1109, 1319];   // E5 A5 C#6 E6
+    seq.forEach((f, i) => {
+      tone(f, { t: i * 0.075, dur: 0.26, type: "triangle", vol: 0.3 });
+      tone(f * 2, { t: i * 0.075, dur: 0.16, type: "sine", vol: 0.09 });
+    });
+    tone(1760, { t: 0.34, dur: 0.5, type: "sine", vol: 0.22 });
+  },
   clear(lines) {
     const base = [523, 659, 784, 988];  // C5 E5 G5 B5
     const count = Math.min(2 + lines, 5);
