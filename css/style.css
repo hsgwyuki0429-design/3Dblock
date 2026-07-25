@@ -1,6 +1,13 @@
-/* 3Dblocks — theme: シングルブルー基調のミニマル (Apple風) */
+/* 3Dblocks — theme: ミニマル (Apple風)。ドームの色はスコアのトーンで変わる */
+
+/* ドームの3色は「色」として登録しておく。こうしておくと切り替えが補間される
+   (未対応ブラウザでは補間されずに一瞬で変わるだけで、表示は壊れない) */
+@property --dome-1 { syntax: "<color>"; inherits: true; initial-value: #ffffff; }
+@property --dome-2 { syntax: "<color>"; inherits: true; initial-value: #f5f5f7; }
+@property --dome-3 { syntax: "<color>"; inherits: true; initial-value: #ececf0; }
 
 :root {
+  transition: --dome-1 0.7s ease, --dome-2 0.7s ease, --dome-3 0.7s ease;
   --ink: #1d1d1f;
   --sub: #6e6e73;
   --hair: rgba(0, 0, 0, 0.10);
@@ -8,6 +15,10 @@
   --accent-press: #0060c8;
   --accent-tint: rgba(0, 113, 227, 0.10);
   --surface: rgba(255, 255, 255, 0.72);
+  /* ドーム(背景)の色。スコアでトーンが変わるたびに JS が差し替える */
+  --dome-1: #ffffff;
+  --dome-2: #f5f5f7;
+  --dome-3: #ececf0;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
           "Inter", "Hiragino Kaku Gothic ProN", "Hiragino Sans",
           "Noto Sans JP", system-ui, sans-serif;
@@ -30,8 +41,12 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   background:
-    radial-gradient(120% 100% at 50% -10%, #ffffff 0%, #f5f5f7 52%, #ececf0 100%);
-  background-color: #f5f5f7;
+    radial-gradient(120% 100% at 50% -10%,
+      var(--dome-1) 0%, var(--dome-2) 52%, var(--dome-3) 100%);
+  background-color: var(--dome-2);
+  /* トーン切り替えがふわっと変わるように (背景色そのものは補間されないので
+     グラデーションは即時。全体の明るさが飛ばないよう色ごとの差は小さめにしてある) */
+  transition: background-color 0.6s ease;
 }
 
 #vignette {
