@@ -37,6 +37,12 @@ const READ = {
   plane: { done: 1.6, doneR: 1.8, near1: 2.4, near2: 1.1, multi: 8.0 },
 };
 
+// たまに「正解がほぼ一つしかない」難問を配る確率。最適解(と、せいぜいもう1通り)を
+// 見つけられないと詰む組。ライン中心に、出過ぎないよう控えめに。
+// 失敗しても詰み時の解の自動再生で「こう置けばよかった」が見られる。
+const TIGHT_PROB = { line: 0.10, plane: 0.05 };
+const TIGHT_MAX_WAYS = 2;   // 正解と認める並びの通り数の上限
+
 const WAYS_CAP = 4;         // 「置き切れる並びの通り数」を数える上限。少ないほど最適解が一意=良い塩梅
 const SOLVABLE_POOL = 5;    // 通り数を比べるために集める「解ける組」の数
 const WAYS_MIN_FILL = 0.33; // これ以上埋まっている時だけ「締まった手(通り数)」を吟味する
@@ -112,6 +118,12 @@ export function dealHand(board, clear, makePiece, opts = {}) {
     if (Math.random() < BIGCLEAR_PROB * (0.4 + filledRatio)) {
       const jp = findJackpotTrio(board, clear, placeable);
       if (jp) return shuffle(jp);
+    }
+
+    // ★ たまに難問: 最適解ともう1つぐらいしか正解が無い、外すと詰む組を配る
+    if (opUsed < 900 && Math.random() < (TIGHT_PROB[clear] ?? 0)) {
+      const tg = findTightTrio(board, placeable);
+      if (tg) { tg.tight = true; return shuffle(tg); }
     }
 
     const trio = findSolvableTrio(board, placeable, filledRatio >= WAYS_MIN_FILL);
@@ -388,6 +400,35 @@ function findSolvableTrio(board, placeable, tight) {
     if (isSolvable(board, trio)) return trio;
   }
   return null;
+}
+
+/**
+ * 「正解がほぼ一つしかない」難問の組を探す。
+ * 3つを置き切れる並びが 1〜TIGHT_MAX_WAYS 通りしかない = 最適解(かもう1つ)を
+ * 見つけられなければ詰む、という歯応えのある組。
+ * 通り数 0(置き切れない)は詰み確定なので絶対に返さない = 詰み防止の保証は保つ。
+ */
+function findTightTrio(board, placeable, maxWays = TIGHT_MAX_WAYS) {
+  const P = placeable.length;
+  if (P < 3) return null;
+  const M = Math.min(P, 12);
+  const combos = [];
+  for (let i = 0; i < M; i++)
+    for (let j = i + 1; j < M; j++)
+      for (let k = j + 1; k < M; k++) combos.push([i, j, k]);
+  shuffle(combos);
+
+  const budget = opUsed + 1100;   // 難問探索だけの上限(リフィルを重くしない)
+  let fallback = null, checked = 0;
+  for (const [i, j, k] of combos) {
+    if (checked++ > 28 || opUsed > budget || opUsed > OP_CAP) break;
+    const trio = [placeable[i], placeable[j], placeable[k]];
+    const ways = countWays(board, trio, maxWays + 1);
+    if (ways === 0) continue;              // 置き切れない組は配らない(保証)
+    if (ways === 1) return trio;           // 正解がただ一つ = いちばん歯応えがある
+    if (ways <= maxWays && !fallback) fallback = trio;
+  }
+  return fallback;
 }
 
 /**
