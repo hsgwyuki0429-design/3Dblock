@@ -195,8 +195,14 @@ if ("serviceWorker" in navigator) {
       refreshing = true;
       location.reload();
     });
-    navigator.serviceWorker.register("sw.js").then(function (reg) {
+    // updateViaCache:"none" → sw.js 自体を HTTP キャッシュから読ませず、
+    // 起動のたびに必ず最新の sw.js を取りにいく(更新検知が遅れないように)
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(function (reg) {
       reg.update();   // 起動ごとに更新チェックを促す
+      // 復帰・再表示のたびにも更新チェック(PWAは開きっぱなしになりやすいため)
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible") reg.update();
+      });
     }).catch(function () {});
   });
 }
