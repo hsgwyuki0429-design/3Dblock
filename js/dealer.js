@@ -10,7 +10,8 @@
 //  4. ごくたまに「盤面をまるごと空(全消し)」にできる組を配って最大のご褒美に。
 //     たまに「大きく消せる(面1枚 / 複数ライン)」組も。出過ぎると単調なので確率で抑える。
 
-const CANDIDATES = 20;      // 1回のディールで生成する候補ピース数 (体積UP分すこし増量)
+const CANDIDATES = 20;      // 1回のディールで用意する候補ピース数
+const GAP_CANDIDATES = 3;   // うち「空欄の形から作る」ピースの数(混ぜすぎると大味になる)
 const BRANCH_CAP = 8;       // 解探索の枝刈り (1手あたり試す配置数)
 const NO_FIT = -1e9;        // どこにも置けないピース
 
@@ -103,13 +104,22 @@ export function dealHand(board, clear, makePiece, opts = {}) {
 
   for (let round = 0; round < 2; round++) {
     const cands = [];
-    for (let i = 0; i < CANDIDATES; i++) {
-      const p = makePiece();
+    // 空欄の形から作るピースを少しだけ混ぜる。既存ブロックに面した隙間に
+    // ぴったり収まる形なので「ここに入れてほしかった形だ」という気持ちよさが出る。
+    // ただし入れすぎると全部ぴったりで大味になるので少数だけ。
+    if (filled > 0) {
+      const seeds = collectGapSeeds(board);   // 種の走査は1回だけ
+      for (let i = 0; i < GAP_CANDIDATES; i++) {
+        const g = growGapPiece(board, GAP_MIN + Math.floor(Math.random() * (GAP_MAX - GAP_MIN + 1)), seeds);
+        if (g) cands.push(g.piece);
+      }
+    }
+    for (let i = cands.length; i < CANDIDATES; i++) cands.push(makePiece());
+    for (const p of cands) {
       const r = bestFit(board, groups, p, pressure, checkHoles, rd);
       p.fit = r.fit;
       p.target = r.target;     // 主に狙えるグループ (3つが同じ所を狙わないように使う)
       p.spots = r.spots;
-      cands.push(p);
     }
     const placeable = cands.filter((p) => p.fit > NO_FIT);
     placeable.sort((a, b) => b.fit - a.fit);   // はまり具合の良い順
@@ -131,10 +141,124 @@ export function dealHand(board, clear, makePiece, opts = {}) {
     if (round === 1 && placeable.length >= 3) return shuffle(placeable.slice(0, 3));
   }
 
-  // ほぼ満杯: 置けるものだけかき集める (実質ゲームオーバー間近)
+  // ここまで来た = 既存の形の中に「3つとも置ける組」が無い。
+  // 形の種類が足りないだけで詰ませるのはもったいないので、
+  // いまの空きにぴったり収まる形を新しく作って配る(必ず置ける)。
+  const made = synthesizeTrio(board);
+  if (made) return made;
+
+  // それでも駄目(空きが本当に無い)= 実質ゲームオーバー
   const last = [];
   for (let i = 0; i < CANDIDATES && last.length < 3; i++) last.push(makePiece());
   return last;
+}
+
+// ---- 空欄の形から作るピース ----
+//
+// 「消える所にはまる形」だけでなく、盤面の空きそのものを見て
+// 「この隙間にぴったり入る形」を作る。既存ブロックに面しているほど気持ちいいので、
+// 接触の多い空きから育てる。既存の形の種類に無い形でも作れるので、
+// 「形が足りなくて詰む」ことがなくなる。
+
+const GAP_MIN = 3, GAP_MAX = 6;   // 作る形の大きさ(マス数)の範囲
+const GAP_SEEDS = 14;             // 種として試す空きセルの数
+
+/**
+ * 空きセルから連結した形を育てて、その形のピースを作る。
+ * @returns {{piece:object, anchor:number[]}|null} piece と、そこにぴったり置ける位置
+ */
+function collectGapSeeds(board) {
+  const n = board.n;
+  const seeds = [];
+  for (let x = 0; x < n; x++)
+    for (let y = 0; y < n; y++)
+      for (let z = 0; z < n; z++) {
+        if (board.get(x, y, z)) continue;
+        let touch = (y === 0) ? 1 : 0;
+        for (const [dx, dy, dz] of NB) {
+          const px = x + dx, py = y + dy, pz = z + dz;
+          if (board.inBounds(px, py, pz) && board.get(px, py, pz)) touch++;
+        }
+        if (touch > 0) seeds.push({ c: [x, y, z], touch: touch + Math.random() });
+      }
+  seeds.sort((a, b) => b.touch - a.touch);   // よく面している所を優先(気持ちよさ)
+  return seeds;
+}
+
+function growGapPiece(board, size, seedList) {
+  // 支えのある空きセル(床 or 既存ブロックに面している)から育てる
+  const seeds = seedList || collectGapSeeds(board);
+  if (!seeds.length) return null;
+
+  const lim = Math.min(seeds.length, GAP_SEEDS);
+  for (let s = 0; s < lim; s++) {
+    const cells = growFrom(board, seeds[s].c, size);
+    if (cells.length < size) continue;
+    // 元の位置そのままで置けるか(支えの条件を満たすか)を確認する
+    const m = [0, 1, 2].map((i) => Math.min(...cells.map((c) => c[i])));
+    const norm = cells.map((c) => [c[0] - m[0], c[1] - m[1], c[2] - m[2]]);
+    if (!board.canPlace(norm, m[0], m[1], m[2])) continue;
+    const span = [0, 1, 2].map((i) => Math.max(...norm.map((c) => c[i])) + 1);
+    return {
+      piece: { cells: norm, shape: shapeKey(norm), span },
+      anchor: m,
+    };
+  }
+  return null;
+}
+
+/** 空きセルを連結に育てる。既存ブロックに面しているセルを優先して伸ばす */
+function growFrom(board, seed, size) {
+  const chosen = [seed];
+  const inSet = new Set([board.idx(...seed)]);
+  while (chosen.length < size) {
+    const cand = [];
+    for (const [x, y, z] of chosen) {
+      for (const [dx, dy, dz] of NB) {
+        const px = x + dx, py = y + dy, pz = z + dz;
+        if (!board.inBounds(px, py, pz)) continue;
+        const k = board.idx(px, py, pz);
+        if (inSet.has(k) || board.cells[k]) continue;
+        let touch = (py === 0) ? 1 : 0;
+        for (const [ex, ey, ez] of NB) {
+          const qx = px + ex, qy = py + ey, qz = pz + ez;
+          if (board.inBounds(qx, qy, qz) && board.get(qx, qy, qz)) touch++;
+        }
+        cand.push({ c: [px, py, pz], k, score: touch + Math.random() * 0.9 });
+      }
+    }
+    if (!cand.length) break;
+    cand.sort((a, b) => b.score - a.score);
+    const pick = cand[0];
+    chosen.push(pick.c);
+    inSet.add(pick.k);
+  }
+  return chosen;
+}
+
+/** 形から一意な名前を作る (game 側の輪郭キャッシュが形ごとに正しく効くように) */
+function shapeKey(cells) {
+  return "fit:" + cells.map((c) => c.join("")).sort().join("_");
+}
+
+/**
+ * いまの空きに収まる形を3つ作る。1つ置いた前提で次を作るので、
+ * 「3つとも順に置ける」ことが構成上保証される(詰み回避の最後の砦)。
+ */
+function synthesizeTrio(board) {
+  const snap = board.cells.slice();
+  const trio = [];
+  for (let i = 0; i < 3; i++) {
+    // 少しずつ小さめも混ぜて、最後の1つが置けなくなるのを避ける
+    const size = GAP_MIN + Math.floor(Math.random() * (GAP_MAX - GAP_MIN + 1)) - i;
+    let got = null;
+    for (let sz = Math.max(1, size); sz >= 1 && !got; sz--) got = growGapPiece(board, sz);
+    if (!got) break;
+    trio.push(got.piece);
+    board.place(got.piece.cells, got.anchor[0], got.anchor[1], got.anchor[2]);
+  }
+  board.cells.set(snap);
+  return trio.length === 3 ? shuffle(trio) : null;
 }
 
 /**
