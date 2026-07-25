@@ -4,7 +4,9 @@
 import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX, APP_VERSION } from "./config.js";
+import {
+  MODES, DEFAULT_MODE, TONES, TONE_STEP, SCORE, STORAGE_PREFIX, APP_VERSION,
+} from "./config.js";
 import { generatePiece } from "./shapes.js";
 import { dealHand, solveHand, solveHandBest } from "./dealer.js";
 import { Board } from "./board.js";
@@ -53,9 +55,14 @@ let overSnapshot = null;               // 詰んだ瞬間の {blocks, score} (�
 let submitted = false;
 
 // カメラ軌道 (目標値へ毎フレーム減衰追従)
+// CAM_R0 = 初期のカメラ距離 (グリッド一辺の何倍か)。
+// 近すぎると盤面の手前側がトレイまで下がってしまい、そこへ置こうとすると
+// 「トレイへ戻す=キャンセル」と判定されてしまうので、少し引いた位置から始める。
+const CAM_R0 = 4.3;
+const CAM_AZ0 = -0.65, CAM_POL0 = 1.02;
 const cam = {
-  az: -0.65, pol: 1.05, r: N * 3.4,
-  tAz: -0.65, tPol: 1.05, tR: N * 3.4,
+  az: CAM_AZ0, pol: CAM_POL0, r: N * CAM_R0,
+  tAz: CAM_AZ0, tPol: CAM_POL0, tR: N * CAM_R0,
 };
 const POL_MIN = 0.16, POL_MAX = 2.86;   // ほぼ真上〜真下近くまで(下側からも覗ける)
 let R_MIN = N * 2.0, R_MAX = N * 6.0;
@@ -137,57 +144,33 @@ const markerMat = new THREE.MeshStandardMaterial({
 });
 let xrayOn = false;
 
-// ---- ブロックの質感バリエーション ----
-// plain=マット / gloss=つやつやキャンディ / stripe=細い斜めストライプ / dots=ドット
-function makePatternTexture(draw) {
-  const c = document.createElement("canvas");
-  c.width = c.height = 128;
-  const g = c.getContext("2d");
-  g.fillStyle = "#ffffff";
-  g.fillRect(0, 0, 128, 128);
-  draw(g);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  return tex;
-}
-const stripeTex = makePatternTexture((g) => {
-  g.strokeStyle = "rgba(0,0,0,0.10)";
-  g.lineWidth = 7;
-  for (let i = -128; i < 256; i += 26) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 128, 128); g.stroke();
-  }
-});
-const dotsTex = makePatternTexture((g) => {
-  g.fillStyle = "rgba(0,0,0,0.10)";
-  for (let y = 16; y < 128; y += 32)
-    for (let x = 16; x < 128; x += 32) {
-      g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill();
-    }
-});
-const FINISHES = ["plain", "plain", "gloss", "gloss", "stripe", "dots"];
-function pickFinish() {
-  return FINISHES[Math.floor(Math.random() * FINISHES.length)];
+// ---- ブロックの色 (トーン) ----
+// 柄(ストライプ/ドット)は廃止。見た目のバリエーションは「トーン=色合い」で出す。
+// ピースは色そのものではなく「パレットの何番目か(ci)」を持ち、
+// 表示するときに現在のトーンの色へ引き当てる。だからトーンが変わると全部まとめて着替える。
+
+let tone = TONES[0];        // 現在のトーン
+let toneStage = 0;          // スコアで何段目まで進んだか (トーン数を超えたら先頭へ回る)
+
+function toneColor(ci) {
+  const p = tone.palette;
+  return p[((ci | 0) % p.length + p.length) % p.length];
 }
 
-function makeBlockMaterial(color, finish = "plain") {
-  const opt = {
+function makeBlockMaterial(color) {
+  return new THREE.MeshStandardMaterial({
     color: color.base,
     emissive: color.emissive,
     emissiveIntensity: BASE_EMISSIVE,
     roughness: 0.42,
     metalness: 0.0,
     envMapIntensity: 0.75,
-  };
-  if (finish === "gloss") { opt.roughness = 0.14; opt.envMapIntensity = 1.2; }
-  else if (finish === "stripe") { opt.map = stripeTex; }
-  else if (finish === "dots") { opt.map = dotsTex; }
-  return new THREE.MeshStandardMaterial(opt);
+  });
 }
 
 /** 1ブロック。角丸の隙間と柔らかい影で隣接キューブが分かれるのでワイヤーは付けない */
-function makeCube(color, finish) {
-  const mesh = new THREE.Mesh(cubeGeo, makeBlockMaterial(color, finish));
+function makeCube(ci) {
+  const mesh = new THREE.Mesh(cubeGeo, makeBlockMaterial(toneColor(ci)));
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
@@ -211,7 +194,7 @@ function makePieceGroup(piece, ghost = false) {
       );
       m.add(e);
     } else {
-      m = makeCube(piece.color, piece.finish);
+      m = makeCube(piece.ci);
     }
     m.position.set(dx, dy, dz);
     g.add(m);
@@ -234,6 +217,7 @@ function cellWorld(x, y, z, out = new THREE.Vector3()) {
 const stageGroup = new THREE.Group();
 scene.add(stageGroup);
 let floorPlate;
+let gridLines, cageLines;   // トーン切り替えで色を差し替えるので参照を持っておく
 
 function disposeObj3D(o) {
   o.traverse((c) => {
@@ -249,10 +233,10 @@ function buildStage() {
     disposeObj3D(c);
   }
 
-  // 床プレート (マットな明るいグレー、柔らかい接地影を受ける)
+  // 床プレート (マットな明るい面、柔らかい接地影を受ける)
   const plateGeo = new RoundedBoxGeometry(N + 0.7, 0.2, N + 0.7, 4, 0.08);
   const plateMat = new THREE.MeshStandardMaterial({
-    color: 0xf0f0f3, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.3,
+    color: tone.floor, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.3,
   });
   floorPlate = new THREE.Mesh(plateGeo, plateMat);
   floorPlate.position.y = -0.1;
@@ -267,18 +251,109 @@ function buildStage() {
   }
   const gridGeo = new THREE.BufferGeometry();
   gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-  stageGroup.add(new THREE.LineSegments(
+  gridLines = new THREE.LineSegments(
     gridGeo,
-    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.9 })
-  ));
+    new THREE.LineBasicMaterial({ color: tone.grid, transparent: true, opacity: 0.9 })
+  );
+  stageGroup.add(gridLines);
 
   // 外枠ケージ (立体の範囲を示す極薄ライン)
-  const cage = new THREE.LineSegments(
+  cageLines = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(N, N, N)),
-    new THREE.LineBasicMaterial({ color: 0xc7c7cc, transparent: true, opacity: 0.5 })
+    new THREE.LineBasicMaterial({ color: tone.cage, transparent: true, opacity: 0.5 })
   );
-  cage.position.y = N / 2;
-  stageGroup.add(cage);
+  cageLines.position.y = N / 2;
+  stageGroup.add(cageLines);
+}
+
+// ---- トーンの切り替え ----
+//
+// スコアが一定を超えるたびに、ドーム(背景)・舞台・場のブロック・ネクストの色が
+// まとめて次のトーンへ着替える。色は ci(パレット番号)で持っているので、
+// 引き当て先のトーンを変えるだけで全部つながって変わる。
+
+/** ドーム(CSS背景)を今のトーンの色にする */
+function applyDome() {
+  const [a, b, c] = tone.dome;
+  const s = document.documentElement.style;
+  s.setProperty("--dome-1", a);
+  s.setProperty("--dome-2", b);
+  s.setProperty("--dome-3", c);
+  document.body.dataset.tone = tone.key;
+}
+
+/** 舞台(床・グリッド・ケージ)を今のトーンの色にする */
+function applyStageTone() {
+  if (floorPlate) floorPlate.material.color.setHex(tone.floor);
+  if (gridLines) gridLines.material.color.setHex(tone.grid);
+  if (cageLines) cageLines.material.color.setHex(tone.cage);
+}
+
+/** 場のブロックとネクストを今のトーンの色に塗り替える */
+function repaintBlocks(animate) {
+  for (const mesh of blockMeshes.values()) {
+    const c = toneColor(mesh.userData.ci);
+    if (xrayOn) continue;                     // すきま表示中は元に戻すときに塗られる
+    if (animate) tweenMaterialColor(mesh.material, c);
+    else { mesh.material.color.setHex(c.base); mesh.material.emissive.setHex(c.emissive); }
+  }
+  for (let i = 0; i < 3; i++) if (hand[i]) setTrayPiece(i, hand[i]);   // ネクストは作り直し
+  if (held) {                                  // ドラッグ中のピースも合わせる
+    const c = toneColor(held.piece.ci);
+    held.group.traverse((o) => {
+      if (o.isMesh && o.material.emissive) {
+        o.material.color.setHex(c.base);
+        o.material.emissive.setHex(c.emissive);
+      }
+    });
+  }
+}
+
+/** 色をふわっと変える (切り替わりが唐突にならないように) */
+function tweenMaterialColor(mat, c) {
+  const from = mat.color.clone(), fromE = mat.emissive.clone();
+  const to = new THREE.Color(c.base), toE = new THREE.Color(c.emissive);
+  let t = 0;
+  anims.push((dt) => {
+    t += dt / 0.55;
+    const k = Math.min(t, 1);
+    mat.color.copy(from).lerp(to, k);
+    mat.emissive.copy(fromE).lerp(toE, k);
+    return k < 1;
+  });
+}
+
+/**
+ * 指定の段階のトーンへ切り替える。
+ * idx は「スコア何段目か」なのでトーン数を超えることがある (超えたら先頭へ回る)。
+ * announce=true なら名前をトーストで知らせる。
+ */
+function setTone(idx, { animate = true, announce = false } = {}) {
+  const stage = Math.max(0, idx | 0);
+  const next = stage % TONES.length;
+  const same = (stage === toneStage && tone === TONES[next]);
+  toneStage = stage;
+  tone = TONES[next];
+  applyDome();
+  applyStageTone();
+  if (!same) repaintBlocks(animate);
+  if (announce && !same) {
+    showToast(tone.label);
+    sfx.chance();
+    if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+  }
+}
+
+/** いまのスコアが何番目のトーンにあたるか */
+function toneIndexFor(pts) {
+  const step = TONE_STEP[mode.key] || TONE_STEP.line;
+  return Math.floor(Math.max(0, pts) / step);
+}
+
+/** スコアが伸びてトーンの境目を越えていたら切り替える */
+function updateTone() {
+  const want = toneIndexFor(score);
+  if (want !== toneStage) setTone(want, { animate: true, announce: true });
 }
 
 // N(=モードのグリッドサイズ)を切り替え、盤面・舞台・カメラ距離を作り直す
@@ -287,14 +362,21 @@ function configureForN(n) {
   OFF = (N - 1) / 2;
   board = new Board(N);
   TARGET.set(0, N * 0.42, 0);
-  cam.r = cam.tR = N * 3.4;
-  R_MIN = N * 2.0;
-  R_MAX = N * 6.0;
+  cam.r = cam.tR = CAM_R0 * N;
+  R_MIN = N * 2.2;
+  R_MAX = N * 6.5;
   keyLight.shadow.camera.left = keyLight.shadow.camera.bottom = -N * 1.7;
   keyLight.shadow.camera.right = keyLight.shadow.camera.top = N * 1.7;
   keyLight.shadow.camera.far = Math.max(40, N * 7);
   keyLight.shadow.camera.updateProjectionMatrix();
   buildStage();
+}
+
+/** 視点を既定の「引き」の位置へ戻す */
+function resetCamera() {
+  cam.tAz = CAM_AZ0;
+  cam.tPol = CAM_POL0;
+  cam.tR = N * CAM_R0;
 }
 configureForN(N);
 
@@ -302,11 +384,10 @@ configureForN(N);
 
 const blockMeshes = new Map();         // board idx -> mesh
 
-function addBlockMesh(x, y, z, color, finish, delay = 0, instant = false) {
-  const mesh = makeCube(color, finish);
+function addBlockMesh(x, y, z, ci, delay = 0, instant = false) {
+  const mesh = makeCube(ci);
   cellWorld(x, y, z, mesh.position);
-  mesh.userData.ci = PALETTE.indexOf(color);   // セーブ用 (色/質感)
-  mesh.userData.finish = finish || "plain";
+  mesh.userData.ci = ci | 0;   // セーブ用 / トーン切り替え時の引き当て用
   blocksGroup.add(mesh);
   blockMeshes.set(board.idx(x, y, z), mesh);
   if (xrayOn) applyXray(mesh);
@@ -326,7 +407,7 @@ function applyXray(mesh) {
     mesh.visible = false;   // 完全に透明にして空欄の金だけが見えるように
   } else {
     mesh.visible = true;
-    const c = PALETTE[mesh.userData.ci] ?? PALETTE[0];
+    const c = toneColor(mesh.userData.ci);
     m.color.setHex(c.base);
     m.emissive.setHex(c.emissive);
     m.emissiveIntensity = BASE_EMISSIVE;
@@ -431,7 +512,7 @@ function aimCameraAtPreview(ax, ay, az, piece) {
   }
   const dy = w.y - TARGET.y;              // 高い所は見下ろし・低い所は見上げ気味に
   cam.tPol = THREE.MathUtils.clamp(1.12 - dy * 0.14, POL_MIN, POL_MAX);
-  cam.tR = N * 3.1;                       // 少しだけ寄る
+  cam.tR = N * (CAM_R0 - 0.4);            // 少しだけ寄る
 }
 
 function popIn(mesh, delay) {
@@ -530,11 +611,12 @@ function slotAtPoint(x, y) {
 // ---------------------------------------------------------------- 手持ちピース
 
 let lastColorIdx = -1;
-function pickColor() {
-  let idx = Math.floor(Math.random() * PALETTE.length);
-  if (idx === lastColorIdx) idx = (idx + 1) % PALETTE.length;   // 同色の連続を避ける
+function pickColorIndex() {
+  const n = TONES[0].palette.length;
+  let idx = Math.floor(Math.random() * n);
+  if (idx === lastColorIdx) idx = (idx + 1) % n;   // 同色の連続を避ける
   lastColorIdx = idx;
-  return PALETTE[idx];
+  return idx;
 }
 
 let clearRun = false;         // 段階的な全消し(クリアラン)の流れに乗っているか
@@ -565,8 +647,7 @@ function refillHand() {
   clearRun = !!pieces.clearRun;                       // 減らせる手が尽きたら流れは切れる
   for (let i = 0; i < 3; i++) {
     const p = pieces[i];
-    p.color = pickColor();
-    p.finish = pickFinish();
+    p.ci = pickColorIndex();
     hand[i] = p;
     setTrayPiece(i, hand[i]);
   }
@@ -652,9 +733,39 @@ function pickUp(slot, e) {
   updateDrag(e.clientX, e.clientY);
 }
 
+// ---- スナップ先の選び方 ----
+// 以前は「指の光線が当たった点との3D距離」だけで選んでいたが、光線が当たる面が
+// 床 ⇄ ブロックの側面/上面 と切り替わるたびに当たり判定の点が数マス飛ぶので、
+// 少し指を動かしただけで仮置きが別の場所へワープしていた(置く瞬間にずれるのも同じ原因)。
+// そこで:
+//   1. 主役は「画面上で指にいちばん近いマス」= 指の動きに対して連続で、ワープしない
+//   2. 奥行きの意図(手前の床か、積み上がったブロックの上か)は当たり点との距離で補う
+//   3. いま吸い付いている場所を少し優遇する(ヒステリシス)ので、指のブレで飛ばない
+const SNAP_PX = 105;        // 指からこの画面距離(px)までのマスに吸い付く
+const SNAP_STICKY_PX = 38;  // いまの吸い付き先を優先する余裕
+const SNAP_DEPTH_W = 0.5;   // 奥行き(当たり点との距離)をどれだけ効かせるか
+
+/** ワールドの1単位が画面で何pxか (ズームしても操作感を一定に保つ) */
+function worldPxScale() {
+  const a = TARGET.clone().project(camera);
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const b = TARGET.clone().add(right).project(camera);
+  return Math.max(1, Math.abs(b.x - a.x) * innerWidth / 2);
+}
+
+const _sp = new THREE.Vector3();
+/** ワールド座標の画面位置(px) */
+function screenOfWorld(v) {
+  _sp.copy(v).project(camera);
+  return [(_sp.x + 1) / 2 * innerWidth, (1 - (_sp.y + 1) / 2) * innerHeight];
+}
+
 function updateDrag(cx, cy) {
   if (!held) return;
-  held.overTray = cy > trayTopY;
+  // キャンセル判定は「指」ではなく「狙っている点(指より LIFT_PX 上)」で見る。
+  // 指で見ていると、盤面の手前側を狙うだけで指がトレイの高さまで下がってしまい、
+  // 置きたいのに勝手にキャンセル(ネクストへ戻る)されてしまうため。
+  held.overTray = (cy - LIFT_PX) > trayTopY;
   trayCards[held.slot].classList.toggle("cancel-hint", held.overTray);
 
   setRayFromClient(cx, cy);
@@ -664,18 +775,24 @@ function updateDrag(cx, cy) {
   const hits = raycaster.intersectObjects(targets, false);
   const hitPoint = hits.length ? hits[0].point : null;
 
-  // 最も近い有効配置を探す
-  let bestP = null, bestD = Infinity;
+  // 狙っている画面位置 (指より LIFT_PX 上を指す)
+  const aimX = cx, aimY = cy - LIFT_PX;
+  const pxPerUnit = worldPxScale();
+  const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+
+  let bestP = null, bestScore = Infinity;
   const c = new THREE.Vector3();
   for (const p of held.placements) {
     cellWorld(p[0], p[1], p[2], c).add(held.centroid);
-    const d = hitPoint
-      ? c.distanceTo(hitPoint)
-      : raycaster.ray.distanceToPoint(c) + 0.5;
-    if (d < bestD) { bestD = d; bestP = p; }
+    const [sx, sy] = screenOfWorld(c);
+    let s = Math.hypot(sx - aimX, sy - aimY);                    // 画面上の近さ(主役)
+    if (hitPoint) s += SNAP_DEPTH_W * c.distanceTo(hitPoint) * pxPerUnit;   // 奥行きの意図
+    if (same(p, held.snapped)) s -= SNAP_STICKY_PX;             // いまの吸い付きを優先
+    if (s < bestScore) { bestScore = s; bestP = p; }
   }
-  const snapDist = 1.55 + held.radius * 0.9;
-  const snapped = (!held.overTray && bestP && bestD < snapDist) ? bestP : null;
+  // 大きいピースは中心が指から遠くなるので、その分だけ許容を広げる
+  const limit = SNAP_PX + held.radius * 0.5 * pxPerUnit;
+  const snapped = (!held.overTray && bestP && bestScore < limit) ? bestP : null;
   setSnap(snapped);
 
   // 指追従位置 (グリッド中心を通るカメラ正対面との交点)
@@ -783,10 +900,10 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
   board.place(piece.cells, ax, ay, az);
   const placedCells = piece.cells.map(([dx, dy, dz]) => [ax + dx, ay + dy, az + dz]);
   piece.cells.forEach(([dx, dy, dz], i) => {
-    addBlockMesh(ax + dx, ay + dy, az + dz, piece.color, piece.finish, i * 0.02);
+    addBlockMesh(ax + dx, ay + dy, az + dz, piece.ci, i * 0.02);
   });
   // 設置の小さなパフ
-  spawnBurst(placedCells, { per: 2, size: 0.16, life: 0.4, color: piece.color.base, up: 1.6 });
+  spawnBurst(placedCells, { per: 2, size: 0.16, life: 0.4, color: toneColor(piece.ci).base, up: 1.6 });
   hand[slot] = null;
   setTrayPiece(slot, null);
   addScore(piece.cells.length * SCORE.perPlacedCell);
@@ -1000,7 +1117,7 @@ function spawnBurst(cells, opts = {}) {
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
   const mat = new THREE.PointsMaterial({
     map: sparkTex,
-    color: opts.color ?? PALETTE[Math.floor(Math.random() * PALETTE.length)].base,
+    color: opts.color ?? toneColor(Math.floor(Math.random() * tone.palette.length)).base,
     size: opts.size ?? 0.3, transparent: true, opacity: 0.9,
     depthWrite: false, sizeAttenuation: true,
   });
@@ -1041,6 +1158,7 @@ function addScore(pts) {
     store.set(bestKey(mode.key), best);
     $("best").textContent = best;
   }
+  updateTone();   // 一定スコアごとに色合い(ドーム・ブロック)が変わる
 }
 
 function showToast(text) {
@@ -1101,13 +1219,14 @@ function startGame(modeKey = mode.key) {
   resetRunState();
   setXrayBtnVisible(true);   // プレビュー用に隠していたら戻す
   setXray(false);   // 新しいゲームはすきま表示オフから
-  cam.tAz = -0.65; cam.tPol = 1.05; cam.tR = N * 3.4;   // 既定の見え方へ戻す(プレビューのカメラ移動を持ち越さない)
+  resetCamera();     // 既定の見え方へ戻す(プレビューのカメラ移動を持ち越さない)
   score = 0;
   combo = 0;
   dealNo = 0;
   submitted = false;
   surrendered = false;
   countScore = true;
+  setTone(0, { animate: false });   // 色合いは最初のトーンから
   $("score").textContent = "0";
   $("best").textContent = best;
   refillHand();
@@ -1138,6 +1257,7 @@ function goHome() {
   clearSolutionGhosts();
   resetRunState();
   state = "title";
+  setTone(0, { animate: true });   // タイトルはいつもの色合いに戻す
   document.body.classList.remove("playing");
   refreshTitleBests();
   updateContinueButton();
@@ -1156,16 +1276,16 @@ function askQuit() {
 const SAVE_KEY = "save";
 
 function serPiece(p) {
-  return { c: p.cells, sh: p.shape, sp: p.span, ci: PALETTE.indexOf(p.color), f: p.finish };
+  return { c: p.cells, sh: p.shape, sp: p.span, ci: p.ci | 0 };
 }
 function desPiece(o) {
-  return { cells: o.c, shape: o.sh, span: o.sp, color: PALETTE[o.ci] ?? PALETTE[0], finish: o.f || "plain" };
+  return { cells: o.c, shape: o.sh, span: o.sp, ci: o.ci | 0 };
 }
 
 // 盤面ブロックを [idx, 色index, 質感] の配列に / から復元
 function serializeBlocks() {
   const blocks = [];
-  for (const [idx, m] of blockMeshes) blocks.push([idx, m.userData.ci | 0, m.userData.finish || "plain"]);
+  for (const [idx, m] of blockMeshes) blocks.push([idx, m.userData.ci | 0]);
   return blocks;
 }
 function restoreBoardFromBlocks(blocks) {
@@ -1175,11 +1295,11 @@ function restoreBoardFromBlocks(blocks) {
   }
   blockMeshes.clear();
   const n = board.n;
-  for (const [idx, ci, finish] of blocks) {
+  for (const [idx, ci] of blocks) {
     const x = idx % n, y = Math.floor(idx / n) % n, z = Math.floor(idx / (n * n));
     if (!board.inBounds(x, y, z)) continue;
     board.set(x, y, z, 1);
-    addBlockMesh(x, y, z, PALETTE[ci] ?? PALETTE[0], finish, 0, true);   // instant
+    addBlockMesh(x, y, z, ci, 0, true);   // instant
   }
 }
 
@@ -1207,16 +1327,18 @@ function resumeGame(d) {
   mode = MODES[d.mode] || MODES[DEFAULT_MODE];
   best = getBest(mode.key);
   runStartBest = Number.isFinite(d.best) ? d.best : best;
+  score = d.score || 0;
+  setTone(toneIndexFor(score), { animate: false });   // 舞台を組む前に色合いを決める
   configureForN(mode.grid);   // 盤面・舞台を作り直す
   clearSolutionGhosts();
   resetRunState();
+  resetCamera();
   setXray(false);
   restoreBoardFromBlocks(d.blocks);
   dealNo = d.dn ?? 99;        // 序盤の仕込みを再開時にやり直さない
   for (let i = 0; i < 3; i++) { hand[i] = d.hand[i] ? desPiece(d.hand[i]) : null; setTrayPiece(i, hand[i]); }
   if (handEmpty()) refillHand();
   else { dealSnapshot = { blocks: serializeBlocks(), pieces: hand.slice() }; computeHandPlan(); }
-  score = d.score || 0;
   combo = d.combo || 0;
   submitted = false;
   surrendered = false;
@@ -1358,7 +1480,7 @@ function flyInPiece(step, onDone) {
 function commitSolutionStep(piece, [ax, ay, az]) {
   board.place(piece.cells, ax, ay, az);
   piece.cells.forEach(([dx, dy, dz], k) => {
-    addBlockMesh(ax + dx, ay + dy, az + dz, piece.color, piece.finish, k * 0.02);
+    addBlockMesh(ax + dx, ay + dy, az + dz, piece.ci, k * 0.02);
   });
   sfx.place();
   const groups = board.completedGroups(mode.clear);
@@ -1399,6 +1521,7 @@ function overToHome() {
   clearSolutionGhosts();
   clearSave();
   state = "title";
+  setTone(0, { animate: true });   // タイトルはいつもの色合いに戻す
   document.body.classList.remove("playing");
   refreshTitleBests();
   updateContinueButton();
@@ -1789,10 +1912,15 @@ window.__tsumi = {
   refill: () => refillHand(),
   goHome: () => goHome(),
   askQuit: () => askQuit(),
+  tone: () => tone.key,
+  snapped: () => (held ? held.snapped : null),
+  overTray: () => (held ? held.overTray : null),
+  setTone: (i) => setTone(i, { animate: true, announce: true }),
+  camR: () => cam.tR,
   addCell: (x, y, z, ci = 0) => {   // テスト用: メッシュ付きでセルを埋める
     if (board.get(x, y, z)) return false;
     board.set(x, y, z, 1);
-    addBlockMesh(x, y, z, PALETTE[ci % PALETTE.length], "plain", 0);
+    addBlockMesh(x, y, z, ci, 0);
     return true;
   },
   screenOf: (x, y, z) => {          // セルの画面座標(px)
