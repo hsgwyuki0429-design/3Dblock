@@ -1,7 +1,7 @@
 // ========================== 3Dblocks 設定 ==========================
 
 // アプリのバージョン (マージのたびに +0.1)
-export const APP_VERSION = "2.6";
+export const APP_VERSION = "2.7";
 
 // グリッドの一辺 (既定)
 export const GRID_N = 5;
@@ -45,6 +45,7 @@ export const SCORE = {
   perClearedCell: 12,   // 消えた1マスあたり (×ライン数)
   multiLineBonus: 120,  // 2ライン目以降、1ラインごとの追加ボーナス
   comboBonus: 50,       // 連続クリア1回ごとの追加ボーナス
+  fullClearBonus: 800,  // 盤面をまるごと空にした(全消し)ときの特大ボーナス
 };
 
 export const STORAGE_PREFIX = "blocks3d.";

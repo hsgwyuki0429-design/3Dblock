@@ -58,10 +58,11 @@ const PL = (board, cells) => { opUsed++; return board.allPlacements(cells); };
  *  - 基本は「good1 + mid1 + wild1」で、置き切れる通り数の少ない締まった組を優先
  *  - どの組も「3つとも置き切れる手順」を解探索で保証(詰み防止)
  */
-export function dealHand(board, clear, makePiece) {
+export function dealHand(board, clear, makePiece, opts = {}) {
   opUsed = 0;   // このディールの探索予算をリセット
   const groups = collectGroups(board, clear);
-  const filledRatio = countFilled(board) / board.cells.length;
+  const filled = countFilled(board);
+  const filledRatio = filled / board.cells.length;
 
   // ★ ごくたまに: 盤面をまるごと空にできる「全消し」手。埋まり具合が手頃な時だけ狙う。
   //   幾何的に不可能な盤面がほとんどなので、確率を掛けても実際に出るのはごく稀。
@@ -74,6 +75,18 @@ export function dealHand(board, clear, makePiece) {
     if (built) return markFullClear(shuffle(built.slice()));
     const fc = findClearAllTrio(board, clear, makePiece, fcCfg);
     if (fc) return markFullClear(shuffle(fc));
+  }
+
+  // ★ 段階的な全消し(クリアラン)。
+  //   1手の3ピースで空にできる盤面はごく限られるので、そこに届かない時は
+  //   「毎回きちんとブロックが減る手」を配り続けて、何手かかけて空へ向かわせる。
+  //   一度この流れに入ったら (opts.runActive) 減らし続ける。減らせなくなったら流れは切れる。
+  if (filled > 0 && (opts.runActive || shouldStartRun(clear, filled, filledRatio))) {
+    // 基本は「確実にブロックが減る」組。始まったあとで減らせない場面では、
+    // 「完成まであと何マス」を確実に縮める仕込みの手だけ許して流れを繋ぐ
+    // (plane は 1面=25マス消しなので、毎手必ず減らすのは幾何的に無理がある)。
+    const red = findReducingTrio(board, clear, makePiece, filled, !!opts.allowSetup);
+    if (red) return markRun(shuffle(red.trio), red.left);
   }
 
   // 盤面が苦しいほど 1 に近づく。読みの重心を「気持ちよさ」から「助け舟」へ寄せる。
@@ -125,7 +138,186 @@ function distinctTargets(trio) {
 /** この手が「全消しチャンス」であることをゲーム側へ伝える目印 */
 function markFullClear(trio) {
   trio.fullClear = true;
+  trio.clearRun = true;    // 全消しへ向かう流れの一部でもある
   return trio;
+}
+
+/** この手が「段階的な全消し」の途中(置けばブロックが減る)であることの目印 */
+function markRun(trio, left) {
+  trio.clearRun = true;
+  trio.runLeft = left;     // うまく置いたときに残るブロック数(進捗表示用)
+  return trio;
+}
+
+// ---- 段階的な全消し(クリアラン) ----
+
+const RUN_START_PROB = { line: 0.06, plane: 0.22 };  // 流れに入る確率(1配給あたり)
+// これより厚い盤面からは始めない。plane は面(25マス)単位でしか消えず盤面が厚めに
+// 推移する(計測で平均5割超)ので、範囲を広く取らないとそもそも流れに入れない。
+const RUN_MAX_FILL = { line: 0.32, plane: 0.66 };
+// 流れを探すときの厚み。plane は 1面=25マスを仕上げないと減らせず条件が厳しいので厚めに。
+const RUN_POOL = { line: 13, plane: 20 };
+const RUN_TRIES = { line: 12, plane: 22 };
+
+/** 全消しへ向かう流れを今から始めるか */
+function shouldStartRun(clear, filled, filledRatio) {
+  if (filled === 0) return false;
+  const maxFill = RUN_MAX_FILL[clear] ?? RUN_MAX_FILL.line;
+  if (filledRatio > maxFill) return false;
+  const p = RUN_START_PROB[clear] ?? RUN_START_PROB.line;
+  return Math.random() < p;
+}
+
+/**
+ * 「3つとも置き切れて、しかも置いたあとブロックが確実に減る」組を探す。
+ * 減り幅がいちばん大きい組を選ぶので、何手か続けるうちに盤面が空へ近づいていく。
+ * 減らせる組が無ければ null (= 流れはここで途切れる)。
+ * @returns {{trio:object[], left:number}|null} left = うまく置いたときの残りブロック数
+ */
+function findReducingTrio(board, clear, makePiece, filled, allowSetup) {
+  const poolN = RUN_POOL[clear] ?? RUN_POOL.line;
+  const triesCap = RUN_TRIES[clear] ?? RUN_TRIES.line;
+  const pool = [];
+  for (let i = 0; i < poolN; i++) {
+    const p = makePiece();
+    if (PL(board, p.cells).length) pool.push(p);
+  }
+  if (pool.length < 3) return null;
+  // 単体で多く消せるピースを前に寄せて、良い組から先に試す
+  for (const p of pool) p._cp = quickClearPotential(board, clear, p);
+  pool.sort((a, b) => b._cp - a._cp);
+
+  const M = Math.min(pool.length, 9);
+  const budget = opUsed + 900;   // この探索だけの上限。リフィルが重くなりすぎないように
+  let best = null, bestLeft = filled, tries = 0;
+  // 仕込み用: 「いちばん完成に近いグループの残り穴」をどこまで縮められるか
+  const holesNow = minGroupHoles(board, clear);
+  let setup = null, setupHoles = holesNow;
+  outer:
+  for (let i = 0; i < M; i++)
+    for (let j = i + 1; j < M; j++)
+      for (let k = j + 1; k < M; k++) {
+        if (++tries > triesCap || opUsed > budget || opUsed > OP_CAP) break outer;   // 予算切れは全ループを抜ける
+        const trio = [pool[i], pool[j], pool[k]];
+        if (!isSolvable(board, trio)) continue;      // 詰ませない保証は維持
+        const left = bestReachableFill(board, clear, trio, filled);
+        if (left < bestLeft) {                        // より薄くなる組を採用
+          bestLeft = left;
+          best = trio;
+          if (left === 0) return { trio, left };      // そのまま全消しできるなら即決
+        } else if (allowSetup && !best) {
+          // 減らせないが「あと少しで消える」に近づける手なら、流れを繋ぐ仕込みとして拾う
+          const h = holesAfterBest(board, clear, trio);
+          if (h < setupHoles) { setupHoles = h; setup = trio; }
+        }
+      }
+  if (best) return { trio: best, left: bestLeft };
+  if (setup) return { trio: setup, left: filled };    // 仕込みの手(数は減らないが前進する)
+  return null;
+}
+
+/** いちばん完成に近いグループの「残り穴」。小さいほど消えるのが近い */
+function minGroupHoles(board, clear) {
+  const gs = groupCellsOf(board, clear);
+  let best = Infinity;
+  for (const cells of gs) {
+    let holes = 0;
+    for (const k of cells) if (!board.cells[k]) holes++;
+    if (holes > 0 && holes < best) best = holes;
+  }
+  return best === Infinity ? 0 : best;
+}
+
+/** trio を貪欲に置いたあとの minGroupHoles (盤面は元に戻す) */
+function holesAfterBest(board, clear, trio) {
+  const snap = board.cells.slice();
+  for (const p of trio) {
+    const pls = PL(board, p.cells);
+    if (!pls.length) continue;
+    let bestPos = pls[0], bestH = Infinity;
+    const lim = Math.min(pls.length, 24);
+    for (let i = 0; i < lim; i++) {
+      const pos = pls[i];
+      board.place(p.cells, pos[0], pos[1], pos[2]);
+      const h = minGroupHoles(board, clear);
+      board.unplace(p.cells, pos[0], pos[1], pos[2]);
+      if (h < bestH) { bestH = h; bestPos = pos; }
+    }
+    board.place(p.cells, bestPos[0], bestPos[1], bestPos[2]);
+    const gs = board.completedGroups(clear);
+    if (gs.length) board.clearLines(gs);
+  }
+  const out = minGroupHoles(board, clear);
+  board.cells.set(snap);
+  return out;
+}
+
+/** グループ(ライン/面)のセル index 一覧 */
+function groupCellsOf(board, clear) {
+  const n = board.n;
+  const out = [];
+  if (clear === "plane") {
+    for (let axis = 0; axis < 3; axis++)
+      for (let f = 0; f < n; f++) {
+        const cells = [];
+        for (let i = 0; i < n; i++)
+          for (let j = 0; j < n; j++) cells.push(board.idx(...planeCell(axis, f, i, j)));
+        out.push(cells);
+      }
+  } else {
+    for (let axis = 0; axis < 3; axis++)
+      for (let a = 0; a < n; a++)
+        for (let b = 0; b < n; b++) {
+          const cells = [];
+          for (let i = 0; i < n; i++) cells.push(board.idx(...axisCell(axis, i, a, b)));
+          out.push(cells);
+        }
+  }
+  return out;
+}
+
+/**
+ * trio を消しながら置いたとき、到達できる最小のブロック数。
+ * 3つとも置き切れる並びだけを見る(途中で置けなくなる並びは詰みなので数えない)。
+ */
+function bestReachableFill(board, clear, trio, current) {
+  const snap = board.cells.slice();
+  let best = Infinity, tries = 0;
+  const dfs = (rem) => {
+    if (tries > 28 || best === 0 || opUsed > OP_CAP) return;
+    if (!rem.length) {
+      const f = countFilled(board);
+      if (f < best) best = f;
+      return;
+    }
+    for (let i = 0; i < rem.length; i++) {
+      const p = rem[i];
+      const pls = PL(board, p.cells);
+      if (!pls.length) continue;
+      for (const pos of pls) {
+        board.place(p.cells, pos[0], pos[1], pos[2]);
+        pos._cc = countClearCells(board, clear);
+        board.unplace(p.cells, pos[0], pos[1], pos[2]);
+      }
+      pls.sort((a, b) => b._cc - a._cc);          // よく消える置き方から
+      const rest = rem.filter((_, j) => j !== i);
+      const cap = Math.min(pls.length, BRANCH_CAP);
+      for (let c = 0; c < cap; c++) {
+        if (tries++ > 28 || best === 0) break;
+        const pos = pls[c];
+        board.place(p.cells, pos[0], pos[1], pos[2]);
+        const gs = board.completedGroups(clear);
+        const cleared = gs.length ? board.clearLines(gs) : NONE;
+        dfs(rest);
+        for (let t = 0; t < cleared.length; t++)
+          board.set(cleared[t][0], cleared[t][1], cleared[t][2], 1);
+        board.unplace(p.cells, pos[0], pos[1], pos[2]);
+      }
+    }
+  };
+  dfs(trio);
+  board.cells.set(snap);
+  return best === Infinity ? current : best;
 }
 
 function countFilled(board) {
@@ -245,7 +437,7 @@ function countWays(board, trio, cap) {
 const TILE_POOL = 80;     // 敷き詰め探索に使う候補ピース数(形と向きを広く集める)
 const TILE_MAX_GAP = 22;   // 埋めるべき空きがこれより広いと3ピースでは覆えない
 const TILE_MAX_COVER = 14; // 覆いに使うグループ数の上限(本数より下の gap 量が本質)
-const TILE_NODE_CAP = 9000;   // 「試した置き方」の総数上限 (内側ループ込みの実作業量)
+const TILE_NODE_CAP = 4500;   // 「試した置き方」の総数上限 (内側ループ込みの実作業量)
 
 /**
  * 全消しチャンスを「狙って構成する」。
@@ -847,6 +1039,83 @@ function shuffle(arr) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+/**
+ * 現在の手札を置き切る手順のうち「いちばん点が高くなる」ものを探す。
+ * 消去を実際にシミュレートするので、ラインや面がそろう置き方が自然に選ばれる。
+ * これを「最適解」として good の判定に使う(=ブロックが消える気持ちいい所が正解になる)。
+ *
+ * @param {object} score config.js の SCORE
+ * @param {number} combo 現在の連続クリア数 (コンボ加点の計算に使う)
+ * @returns {{steps:{piece,pos:[x,y,z]}[], points:number}} 置く順の配列と合計点
+ */
+export function solveHandBest(board, clear, pieces, score, combo = 0) {
+  const live = pieces.filter(Boolean);
+  if (!live.length) return { steps: [], points: 0 };
+
+  let best = { steps: [], points: -1 };
+  let nodes = 0;
+  const NODE_CAP = 2600;
+  const TOP = 10;            // 1ピースあたり試す置き方 (消える所を優先して上位だけ)
+
+  const dfs = (rem, path, pts, cmb) => {
+    if (path.length > best.steps.length ||
+        (path.length === best.steps.length && pts > best.points)) {
+      best = { steps: path.slice(), points: pts };
+    }
+    if (!rem.length || nodes > NODE_CAP) return;
+
+    for (let i = 0; i < rem.length; i++) {
+      const p = rem[i];
+      const pls = board.allPlacements(p.cells);
+      if (!pls.length) continue;
+      // 消える量が多い置き方から試す(高得点の枝を先に見る)
+      for (const pos of pls) {
+        board.place(p.cells, pos[0], pos[1], pos[2]);
+        const g = board.completedGroups(clear);
+        pos._cc = g.length ? countClearCells(board, clear) : 0;
+        pos._g = g.length;
+        board.unplace(p.cells, pos[0], pos[1], pos[2]);
+      }
+      pls.sort((a, b) => (b._cc - a._cc) || (a[1] - b[1]));
+      const rest = rem.filter((_, j) => j !== i);
+      const cap = Math.min(pls.length, TOP);
+      for (let k = 0; k < cap; k++) {
+        if (nodes++ > NODE_CAP) return;
+        const pos = pls[k];
+        board.place(p.cells, pos[0], pos[1], pos[2]);
+        let gained = p.cells.length * score.perPlacedCell;
+        let nextCombo = cmb;
+        const groups = board.completedGroups(clear);
+        let cleared = NONE;
+        if (groups.length) {
+          nextCombo = cmb + 1;
+          cleared = board.clearLines(groups);
+          gained += cleared.length * score.perClearedCell * groups.length
+            + (groups.length > 1 ? score.multiLineBonus * (groups.length - 1) : 0)
+            + (nextCombo > 1 ? score.comboBonus * nextCombo : 0);
+          // 盤面がまるごと空になる手は最大のご褒美。最適解が自然と全消しを目指すようになる。
+          if (board.isEmptyBoard()) gained += score.fullClearBonus || 0;
+        } else {
+          nextCombo = 0;
+        }
+        // 同点なら盤面が薄くなる方を選ぶ(全消しへ向かう流れを保つための小さな傾き)
+        gained += (board.cells.length - countFilled(board)) * 0.02;
+        path.push({ piece: p, pos: [pos[0], pos[1], pos[2]] });
+        dfs(rest, path, pts + gained, nextCombo);
+        path.pop();
+        for (let t = 0; t < cleared.length; t++)
+          board.set(cleared[t][0], cleared[t][1], cleared[t][2], 1);   // 消去を戻す
+        board.unplace(p.cells, pos[0], pos[1], pos[2]);
+      }
+    }
+  };
+
+  const snap = board.cells.slice();
+  dfs(live, [], 0, combo);
+  board.cells.set(snap);
+  return best;
 }
 
 /**
