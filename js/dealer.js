@@ -44,6 +44,18 @@ const READ = {
 const TIGHT_PROB = { line: 0.10, plane: 0.05 };
 const TIGHT_MAX_WAYS = 2;   // 正解と認める並びの通り数の上限
 
+// 「罠」の手を配る確率。置ける場所はたくさんあるのに、そのほとんどが
+// 置いた瞬間に詰む — つまり簡単そうに見えて置き場所を間違えると死ぬ組。
+// (難問=そもそも正解が少ない、とは別物。こちらは選択肢が多いのに大半が地雷)
+// 盤面が薄いうちはどこに置いても安全なので罠は成立しない(計測: 生存率ほぼ100%)。
+// 厚くなってきた局面に狙いを絞り、そこでは高めの確率で罠を出す。
+const TRAP_MIN_FILL = 0.17;   // これ以上埋まっている時だけ罠を狙う
+const TRAP_PROB = { line: 0.45, plane: 0.35 };
+const TRAP_MAX_RATIO = 0.55;  // 生き残る手が全体のこれ以下なら「罠」とみなす
+const TRAP_MIN_SPOTS = 6;     // 置ける場所がこれ以上ある(=簡単そうに見える)のが条件
+const TRAP_SAMPLES = 6;       // 1ピースあたり調べる置き方の数
+const TRAP_COMBOS = 6;        // 調べる組の数
+
 const WAYS_CAP = 4;         // 「置き切れる並びの通り数」を数える上限。少ないほど最適解が一意=良い塩梅
 const SOLVABLE_POOL = 5;    // 通り数を比べるために集める「解ける組」の数
 const WAYS_MIN_FILL = 0.33; // これ以上埋まっている時だけ「締まった手(通り数)」を吟味する
@@ -128,6 +140,13 @@ export function dealHand(board, clear, makePiece, opts = {}) {
     if (Math.random() < BIGCLEAR_PROB * (0.4 + filledRatio)) {
       const jp = findJackpotTrio(board, clear, placeable);
       if (jp) return shuffle(jp);
+    }
+
+    // ★ たまに罠: 置ける場所は多いのに、大半の置き方が詰みに繋がる組
+    if (filledRatio >= TRAP_MIN_FILL && opUsed < 900
+        && Math.random() < (TRAP_PROB[clear] ?? 0)) {
+      const tp = findTrapTrio(board, clear, placeable);
+      if (tp) { tp.trap = true; return shuffle(tp); }
     }
 
     // ★ たまに難問: 最適解ともう1つぐらいしか正解が無い、外すと詰む組を配る
@@ -524,6 +543,76 @@ function findSolvableTrio(board, placeable, tight) {
     if (isSolvable(board, trio)) return trio;
   }
   return null;
+}
+
+/**
+ * 「罠」の組を探す。
+ * 置ける場所はたくさんあるのに、その大半が「置いた瞬間に残りが置けなくなる」組。
+ * 簡単そうに見えて、置き場所を間違えると死ぬ = 判断が効く歯応え。
+ * 生き残る手が1つも無い組は返さない(正解は必ず存在する)。
+ */
+function findTrapTrio(board, clear, placeable) {
+  const P = placeable.length;
+  if (P < 3) return null;
+  // 「置ける場所が多い」ピースだけを対象にする(いかにも簡単そうに見える手にするため)
+  const roomy = placeable.filter((p) => (p.spots ?? 0) >= TRAP_MIN_SPOTS);
+  const pool = roomy.length >= 3 ? roomy : placeable;
+  const M = Math.min(pool.length, 10);
+
+  const combos = [];
+  for (let i = 0; i < M; i++)
+    for (let j = i + 1; j < M; j++)
+      for (let k = j + 1; k < M; k++) combos.push([i, j, k]);
+  shuffle(combos);
+
+  const budget = opUsed + 1100;
+  let best = null, bestRatio = Infinity, checked = 0;
+  for (const [i, j, k] of combos) {
+    if (checked++ > TRAP_COMBOS || opUsed > budget || opUsed > OP_CAP) break;
+    const trio = [pool[i], pool[j], pool[k]];
+    const q = trapQuality(board, clear, trio);
+    // 盤面がまだ安全すぎる(どこに置いても死なない)なら、探しても無駄なので即やめる。
+    // ライン中盤のような薄い盤面ではここで抜けるので、配給が重くならない。
+    if (checked === 1 && q.total > 0 && q.ratio > 0.85) return null;
+    if (q.safe === 0) continue;                 // 正解が無い組は配らない
+    if (q.ratio <= TRAP_MAX_RATIO && q.ratio < bestRatio) {
+      bestRatio = q.ratio;
+      best = trio;
+      if (q.ratio <= 0.12) break;               // 十分に罠。これ以上探さない
+    }
+  }
+  return best;
+}
+
+/**
+ * 罠の度合い: 最初の一手として選べる置き方のうち、
+ * 「置いたあとも残り2つを置き切れる」ものがどれだけの割合か。
+ * 消去も実際に起こして判定するので、遊んだときの挙動と一致する。
+ * @returns {{total:number, safe:number, ratio:number}} ratio が小さいほど罠
+ */
+function trapQuality(board, clear, trio) {
+  let total = 0, safe = 0;
+  for (let i = 0; i < trio.length; i++) {
+    const p = trio[i];
+    const pls = PL(board, p.cells);
+    if (!pls.length) return { total: 0, safe: 0, ratio: 1 };   // そもそも置けない=対象外
+    const rest = trio.filter((_, j) => j !== i);
+    const step = Math.max(1, Math.floor(pls.length / TRAP_SAMPLES));
+    for (let n = 0; n < pls.length; n += step) {
+      if (opUsed > OP_CAP) break;
+      const pos = pls[n];
+      total++;
+      board.place(p.cells, pos[0], pos[1], pos[2]);
+      const gs = board.completedGroups(clear);
+      const cleared = gs.length ? board.clearLines(gs) : NONE;
+      const ok = isSolvable(board, rest);
+      for (let t = 0; t < cleared.length; t++)
+        board.set(cleared[t][0], cleared[t][1], cleared[t][2], 1);
+      board.unplace(p.cells, pos[0], pos[1], pos[2]);
+      if (ok) safe++;
+    }
+  }
+  return { total, safe, ratio: total ? safe / total : 1 };
 }
 
 /**
