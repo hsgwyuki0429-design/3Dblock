@@ -99,7 +99,10 @@ const envTex = pmrem.fromScene(new RoomEnvironment(), 0.05).texture;
 scene.environment = envTex;
 
 // 柔らかいスタジオライティング (Apple製品ショット風)
-scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+// 明るさはトーンごとに変えられる (蛍光トーンは落として発光を活かす)
+const AMBIENT0 = 0.85, KEY0 = 1.7, FILL0 = 0.5, EXPOSURE0 = 1.05;
+const ambLight = new THREE.AmbientLight(0xffffff, AMBIENT0);
+scene.add(ambLight);
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
 keyLight.position.set(5, 12, 6);
 keyLight.castShadow = true;
@@ -157,14 +160,17 @@ function toneColor(ci) {
   return p[((ci | 0) % p.length + p.length) % p.length];
 }
 
+const toneEmissive = () => tone.emissive ?? BASE_EMISSIVE;   // ブロックの発光の強さ
+const toneEnv = () => tone.env ?? 0.75;                      // 映り込みの強さ
+
 function makeBlockMaterial(color) {
   return new THREE.MeshStandardMaterial({
     color: color.base,
     emissive: color.emissive,
-    emissiveIntensity: BASE_EMISSIVE,
+    emissiveIntensity: toneEmissive(),
     roughness: 0.42,
     metalness: 0.0,
-    envMapIntensity: 0.75,
+    envMapIntensity: toneEnv(),
   });
 }
 
@@ -280,13 +286,23 @@ function applyDome() {
   s.setProperty("--dome-2", b);
   s.setProperty("--dome-3", c);
   document.body.dataset.tone = tone.key;
+  // 暗いドームのトーンでは HUD の文字色などを明るい側へ反転する (CSS 側で対応)
+  document.body.dataset.dark = tone.dark ? "1" : "0";
 }
 
-/** 舞台(床・グリッド・ケージ)を今のトーンの色にする */
+/** 舞台(床・グリッド・ケージ)と光の当て方を今のトーンに合わせる */
 function applyStageTone() {
-  if (floorPlate) floorPlate.material.color.setHex(tone.floor);
+  if (floorPlate) {
+    floorPlate.material.color.setHex(tone.floor);
+    floorPlate.material.envMapIntensity = tone.dark ? 0.12 : 0.3;
+  }
   if (gridLines) gridLines.material.color.setHex(tone.grid);
   if (cageLines) cageLines.material.color.setHex(tone.cage);
+  const L = tone.light || {};
+  ambLight.intensity = L.ambient ?? AMBIENT0;
+  keyLight.intensity = L.key ?? KEY0;
+  fillLight.intensity = L.fill ?? FILL0;
+  renderer.toneMappingExposure = L.exposure ?? EXPOSURE0;
 }
 
 /** 場のブロックとネクストを今のトーンの色に塗り替える */
@@ -294,6 +310,8 @@ function repaintBlocks(animate) {
   for (const mesh of blockMeshes.values()) {
     const c = toneColor(mesh.userData.ci);
     if (xrayOn) continue;                     // すきま表示中は元に戻すときに塗られる
+    mesh.material.emissiveIntensity = toneEmissive();
+    mesh.material.envMapIntensity = toneEnv();
     if (animate) tweenMaterialColor(mesh.material, c);
     else { mesh.material.color.setHex(c.base); mesh.material.emissive.setHex(c.emissive); }
   }
@@ -410,7 +428,8 @@ function applyXray(mesh) {
     const c = toneColor(mesh.userData.ci);
     m.color.setHex(c.base);
     m.emissive.setHex(c.emissive);
-    m.emissiveIntensity = BASE_EMISSIVE;
+    m.emissiveIntensity = toneEmissive();
+    m.envMapIntensity = toneEnv();
     m.transparent = false; m.opacity = 1; m.depthWrite = true;
   }
   m.needsUpdate = true;   // transparent フラグ変更は再コンパイルが必要
@@ -816,7 +835,7 @@ function restoreLit(h) {
   for (const r of h.litMeshes) {
     r.mesh.material.color.setHex(r.color);
     r.mesh.material.emissive.setHex(r.emissive);
-    r.mesh.material.emissiveIntensity = BASE_EMISSIVE;
+    r.mesh.material.emissiveIntensity = toneEmissive();
   }
   h.litMeshes = [];
 }
