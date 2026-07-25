@@ -6,7 +6,7 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { MODES, DEFAULT_MODE, PALETTE, SCORE, STORAGE_PREFIX, APP_VERSION } from "./config.js";
 import { generatePiece } from "./shapes.js";
-import { dealHand, solveHand, solveHandBest, canClearAll } from "./dealer.js";
+import { dealHand, solveHand, solveHandBest } from "./dealer.js";
 import { Board } from "./board.js";
 import { initAudio, setMuted, sfx } from "./audio.js";
 import {
@@ -48,7 +48,7 @@ let countScore = true;                 // 解の再生中は false (見せるだ
 let dealSnapshot = null;               // 配給時の {blocks, pieces} (詰み時の再生用)
 let handPlan = new Map();              // ディーラーが想定する最適解 (piece -> 置くべき [x,y,z])。
                                        //   プレイヤーがこの位置どおりに置いたら "good" を出す
-let chanceOn = false;                  // いまの手札で「全消し」が成立しうるか (告知の表示状態)
+let dealNo = 0;                        // このゲームで何回目の配給か (序盤だけの仕込みに使う)
 let overSnapshot = null;               // 詰んだ瞬間の {blocks, score} (救済復活用)
 let submitted = false;
 
@@ -503,8 +503,6 @@ function layoutTray() {
   trayTopY = y - 12;
   const label = $("trayLabel");
   label.style.top = (y - 20) + "px";
-  const cb = $("chanceBanner");
-  if (cb) cb.style.top = (y - 56) + "px";   // トレイのすぐ上(ラベルの上)に出す
 
   // すきま可視化ボタンをトレイ右上に
   const xb = $("btnXray");
@@ -539,9 +537,7 @@ function pickColor() {
   return PALETTE[idx];
 }
 
-let dealtFullClear = false;   // 直近の配給が「全消しできる組」だったか
 let clearRun = false;         // 段階的な全消し(クリアラン)の流れに乗っているか
-let runLeft = 0;              // うまく置けば残るブロック数 (進捗表示用)
 let runBestFill = Infinity;   // その流れで到達した最少ブロック数
 let runStale = 0;             // 何手つづけて記録を更新できていないか
 
@@ -561,10 +557,12 @@ function refillHand() {
   // クリアラン中は「置けば確実にブロックが減る手」を続けてもらう
   const pieces = dealHand(board, mode.clear, () =>
     generatePiece(N, Math.random, mode.maxCells),
-    { runActive: clearRun, allowSetup: clearRun && runStale < 3 });
-  dealtFullClear = !!pieces.fullClear;
+    {
+      runActive: clearRun, allowSetup: clearRun && runStale < 3,
+      maxCells: mode.maxCells, dealNo,
+    });
+  dealNo++;
   clearRun = !!pieces.clearRun;                       // 減らせる手が尽きたら流れは切れる
-  runLeft = pieces.runLeft ?? (pieces.fullClear ? 0 : 0);
   for (let i = 0; i < 3; i++) {
     const p = pieces[i];
     p.color = pickColor();
@@ -599,47 +597,14 @@ function computeHandPlan() {
 }
 
 /**
- * 「いまの手札を使えば盤面をまるごと空にできる」状態かを調べ、告知の出し入れをする。
- * 配給直後だけでなく1手ごとに呼ぶので、
- *   - ディーラーが仕込んだチャンスも、たまたま成立したチャンスも同じように拾える
- *   - 置き方を誤ってチャンスが消えたら、告知もすぐ引っ込む(嘘をつかない)
- * 探索はディーラー側で枝刈り済み。
+ * 全消しへ向かう流れの状態をまっさらに戻す (ゲーム開始/終了/ホームへ戻る時)。
+ * 「全消しチャンス」の予告表示は廃止した — 自分で気づいた時がいちばん気持ちいいので、
+ * ディーラーは仕込むだけで、そのことは画面に出さない。
  */
-function updateChance(dealtChance = false) {
-  const live = hand.filter(Boolean);
-  const alive = state === "play" && live.length > 0 && !board.isEmptyBoard();
-  // dealtChance: ディーラーが「全消しできる組」として配った直後。探索し直さずとも確実なので
-  //              取りこぼさないようそのまま信じる (配給時点では手札3つ・盤面も未変更)。
-  const canEmpty = alive && (dealtChance || canClearAll(board, mode.clear, live));
-  // クリアラン: 1手では空にできないが、この手を置けば確実にブロックが減っていく流れ
-  const running = alive && clearRun && !canEmpty;
-  const on = canEmpty || running;
-
-  if (on) {
-    // 進行中は「あと何個」を出して、空へ向かっているのが分かるようにする
-    $("chanceText").textContent = canEmpty
-      ? "全消しチャンス"
-      : `全消しへ あと${Math.max(runLeft, 1)}個`;
-  }
-  if (on === chanceOn) return;
-  chanceOn = on;
-  document.body.classList.toggle("chance", on);
-  $("chanceBanner").classList.toggle("show", on);
-  if (on) {                       // 到来した瞬間だけ音と振動で気づかせる
-    sfx.chance();
-    if (navigator.vibrate) navigator.vibrate([14, 40, 14]);
-  }
-}
-
-/** チャンス表示を強制的に消す (ゲーム開始/終了/ホームへ戻る時) */
-function clearChance() {
-  chanceOn = false;
+function resetRunState() {
   clearRun = false;
-  runLeft = 0;
   runBestFill = Infinity;
   runStale = 0;
-  document.body.classList.remove("chance");
-  $("chanceBanner").classList.remove("show");
 }
 
 // ---------------------------------------------------------------- ドラッグ&スナップ
@@ -840,7 +805,6 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
   // 盤面がまるごと空になった = 全消し達成。いちばん大きなご褒美として派手に見せる。
   if (board.isEmptyBoard()) {
     clearRun = false;
-    runLeft = 0;
     addScore(SCORE.fullClearBonus);
     showToast("全消し!");
     sfx.chance();
@@ -848,13 +812,9 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
     if (navigator.vibrate) navigator.vibrate([24, 50, 24, 50, 40]);
   }
 
-  const refilled = handEmpty();
-  if (refilled) refillHand();          // refillHand 側で最適解を計算し直す
+  if (handEmpty()) refillHand();       // refillHand 側で最適解を計算し直す
   else computeHandPlan();              // 盤面が変わったので残りピースの最適解を引き直す
   if (xrayOn) refreshXrayMarkers();
-  // 全消しが狙える状態になった/なくなった を1手ごとに知らせる。
-  // 配給直後だけはディーラーの判定をそのまま使う(取りこぼし防止)。
-  updateChance(refilled && dealtFullClear);
   saveGame();
   checkGameOver();
   return true;
@@ -1138,12 +1098,13 @@ function startGame(modeKey = mode.key) {
   blockMeshes.clear();
   cancelHeld();
   clearSolutionGhosts();
-  clearChance();
+  resetRunState();
   setXrayBtnVisible(true);   // プレビュー用に隠していたら戻す
   setXray(false);   // 新しいゲームはすきま表示オフから
   cam.tAz = -0.65; cam.tPol = 1.05; cam.tR = N * 3.4;   // 既定の見え方へ戻す(プレビューのカメラ移動を持ち越さない)
   score = 0;
   combo = 0;
+  dealNo = 0;
   submitted = false;
   surrendered = false;
   countScore = true;
@@ -1154,22 +1115,41 @@ function startGame(modeKey = mode.key) {
   hideOverlay("ovOver");
   document.body.classList.add("playing");
   state = "play";
-  updateChance(dealtFullClear);   // 新しい盤面は空なのでまず出ない。状態を揃えておく
   saveGame();
 }
 
-/** プレイ中からタイトルへ戻る */
+/**
+ * タイトルへ戻る。
+ * プレイ中に押したときは盤面をセーブしてから戻るので、タイトルの「つづきから」で
+ * まったく同じ続きを再開できる (誤って押しても取り返しがつく)。
+ * 解のプレビュー中(詰んだ後)は、そのままタイトルへ抜けられるようにする。
+ */
 function goHome() {
+  if (state === "solving") {
+    finishSurrender();          // プレビューを畳んで結果を確定させる
+    if (mustSave) return;       // ベスト更新時は記録が先 (結果画面で足止め)
+    overToHome();
+    return;
+  }
   if (state !== "play") return;
+  hideOverlay("ovQuit");
+  saveGame();                   // 途中の盤面を残す = あとで「つづきから」再開できる
   cancelHeld();
   clearSolutionGhosts();
-  clearChance();
-  clearSave();
+  resetRunState();
   state = "title";
   document.body.classList.remove("playing");
   refreshTitleBests();
   updateContinueButton();
   showOverlay("ovTitle");
+}
+
+/** ホームボタン: プレイ中は取り返しがつくように、まず確認してから戻る */
+function askQuit() {
+  if (state === "solving") { goHome(); return; }
+  if (state !== "play") return;
+  cancelHeld();
+  showOverlay("ovQuit");
 }
 
 // ---- セーブ / 復元 / 復活 ----
@@ -1206,7 +1186,7 @@ function restoreBoardFromBlocks(blocks) {
 function saveGame() {
   if (state !== "play") return;
   const data = {
-    v: 1, mode: mode.key, score, combo, best: runStartBest,
+    v: 1, mode: mode.key, score, combo, best: runStartBest, dn: dealNo,
     blocks: serializeBlocks(), hand: hand.map((p) => (p ? serPiece(p) : null)),
   };
   try { store.set(SAVE_KEY, JSON.stringify(data)); } catch {}
@@ -1229,8 +1209,10 @@ function resumeGame(d) {
   runStartBest = Number.isFinite(d.best) ? d.best : best;
   configureForN(mode.grid);   // 盤面・舞台を作り直す
   clearSolutionGhosts();
+  resetRunState();
   setXray(false);
   restoreBoardFromBlocks(d.blocks);
+  dealNo = d.dn ?? 99;        // 序盤の仕込みを再開時にやり直さない
   for (let i = 0; i < 3; i++) { hand[i] = d.hand[i] ? desPiece(d.hand[i]) : null; setTrayPiece(i, hand[i]); }
   if (handEmpty()) refillHand();
   else { dealSnapshot = { blocks: serializeBlocks(), pieces: hand.slice() }; computeHandPlan(); }
@@ -1247,7 +1229,6 @@ function resumeGame(d) {
   hideOverlay("ovOver");
   document.body.classList.add("playing");
   state = "play";
-  updateChance();
   checkGameOver();   // 再開直後に詰んでいたら通常処理
   saveGame();
 }
@@ -1267,6 +1248,12 @@ function updateContinueButton() {
 }
 
 // ---- 最適解の動画再生 ----
+// 再生速度は「じっくり見せる基準」の 1.5倍速。
+// (基準: 1ピース1.0秒で降下 / 間隔940ms / ループ待ち1400ms)
+const SOL_SPEED = 1.5;
+const SOL_FALL_SEC = 1.0 / SOL_SPEED;              // 1ピースが降りきるまで
+const SOL_GAP_MS = Math.round(940 / SOL_SPEED);    // 次のピースまでの間
+const SOL_LOOP_MS = Math.round(1400 / SOL_SPEED);  // 最後まで見せてから流し直すまで
 let solutionGhosts = [];
 let solveTimer = null;
 
@@ -1295,7 +1282,7 @@ function showLossSolution() {
   let sol = [];
   if (snap && pieces.length) {
     restoreBoardFromBlocks(snap.blocks);   // 配給時点へ巻き戻す
-    sol = solveHand(board, pieces);
+    sol = solveHand(board, pieces, mode.clear);
   }
   if (!sol.length) {   // 見せる解が無い(ごく稀) → そのまま終了
     if (overSnapshot) restoreBoardFromBlocks(overSnapshot.blocks);
@@ -1316,11 +1303,11 @@ function playSolution(sol, i, realScore) {
   if (i >= sol.length) {
     $("btnSolveDone").classList.add("show");   // いつでも結果へ行ける
     if (solveTimer) clearTimeout(solveTimer);
-    solveTimer = setTimeout(() => loopSolution(sol, realScore), 1400);   // ループ再生
+    solveTimer = setTimeout(() => loopSolution(sol, realScore), SOL_LOOP_MS);   // ループ再生
     return;
   }
   flyInPiece(sol[i], () => {
-    solveTimer = setTimeout(() => playSolution(sol, i + 1, realScore), 940);   // 0.5倍速
+    solveTimer = setTimeout(() => playSolution(sol, i + 1, realScore), SOL_GAP_MS);
   });
 }
 
@@ -1351,7 +1338,7 @@ function flyInPiece(step, onDone) {
   ghost.position.copy(start);
   scene.add(ghost);
   solutionGhosts.push(ghost);
-  let t = 0; const dur = 1.0;   // 0.5倍速(従来0.5秒→1.0秒でゆっくり降りる)
+  let t = 0; const dur = SOL_FALL_SEC;
   anims.push((dt) => {
     t += dt;
     const k = Math.min(t / dur, 1);
@@ -1393,7 +1380,7 @@ function checkGameOver() {
     if (p && board.allPlacements(p.cells).length > 0) return;
   }
   // 詰み: 救済用に今の盤面を控え、少し置いて「どう置けばよかったか」を再生
-  clearChance();
+  resetRunState();
   clearSave();
   overSnapshot = { blocks: serializeBlocks(), score };
   state = "solving";
@@ -1609,7 +1596,9 @@ document.addEventListener("dblclick", (e) => e.preventDefault());
 $("btnStartLine").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("line"); });
 $("btnStartPlane").addEventListener("click", () => { sfx.ui(); initAudio(); startGame("plane"); });
 $("btnAgain").addEventListener("click", () => { sfx.ui(); startGame(); });
-$("btnHome").addEventListener("click", () => { sfx.ui(); goHome(); });
+$("btnHome").addEventListener("click", () => { sfx.ui(); askQuit(); });
+$("btnQuitBack").addEventListener("click", () => { sfx.ui(); hideOverlay("ovQuit"); });
+$("btnQuitHome").addEventListener("click", () => { sfx.ui(); goHome(); });
 $("btnGoHomeOver").addEventListener("click", () => { sfx.ui(); overToHome(); });
 $("btnXray").addEventListener("click", () => {
   if (state === "solving") return;   // プレビュー中は無効(ボタンは隠している)
@@ -1796,10 +1785,10 @@ window.__tsumi = {
   },
   placements: (slot) => (hand[slot] ? board.allPlacements(hand[slot].cells) : []),
   planFor: (slot) => (hand[slot] ? (handPlan.get(hand[slot]) || null) : null),   // 最適解の置き位置
-  chance: () => chanceOn,                                                        // 全消しチャンス表示中か
   checkOver: () => checkGameOver(),
   refill: () => refillHand(),
   goHome: () => goHome(),
+  askQuit: () => askQuit(),
   addCell: (x, y, z, ci = 0) => {   // テスト用: メッシュ付きでセルを埋める
     if (board.get(x, y, z)) return false;
     board.set(x, y, z, 1);

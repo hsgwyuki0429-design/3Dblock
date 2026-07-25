@@ -38,31 +38,63 @@ const READ = {
   plane: { done: 1.6, doneR: 1.8, near1: 2.4, near2: 1.1, multi: 8.0 },
 };
 
-// たまに「正解がほぼ一つしかない」難問を配る確率。最適解(と、せいぜいもう1通り)を
-// 見つけられないと詰む組。ライン中心に、出過ぎないよう控えめに。
+// たまに「正解がほぼ一つしかない」難問を配る確率。最適解を見つけられないと詰む組。
+// ライン(1列=5マス)は頻繁に消えて盤面が薄いまま推移するので、放っておくと
+// 「どこに置いても大丈夫」な局面ばかりになり簡単すぎる。そこでラインでは
+//  - 正解が「ただ一つ」の組だけを難問と認め (plane はもう1通りまで許す)
+//  - 出す確率も厚くする
+// ことで、置き場所を間違えたら詰む緊張感を作る。
 // 失敗しても詰み時の解の自動再生で「こう置けばよかった」が見られる。
-const TIGHT_PROB = { line: 0.10, plane: 0.05 };
-const TIGHT_MAX_WAYS = 2;   // 正解と認める並びの通り数の上限
+const TIGHT_PROB = { line: 0.34, plane: 0.08 };
+const TIGHT_MAX_WAYS = { line: 1, plane: 2 };       // 正解と認める並びの通り数の上限
+const TIGHT_MIN_FILL = { line: 0.08, plane: 0.16 }; // 薄すぎる盤面では通り数が多く成立しない
+const TIGHT_BRANCH = 12;    // 難問判定の通り数だけは枝を広げて数える(「一意」と言い切るため)
+const TIGHT_MAX_RATIO = 0.16;  // 生き残る置き方がこの割合以下なら「実質、正解は一つ」
 
 // 「罠」の手を配る確率。置ける場所はたくさんあるのに、そのほとんどが
 // 置いた瞬間に詰む — つまり簡単そうに見えて置き場所を間違えると死ぬ組。
 // (難問=そもそも正解が少ない、とは別物。こちらは選択肢が多いのに大半が地雷)
 // 盤面が薄いうちはどこに置いても安全なので罠は成立しない(計測: 生存率ほぼ100%)。
-// 厚くなってきた局面に狙いを絞り、そこでは高めの確率で罠を出す。
-const TRAP_MIN_FILL = 0.17;   // これ以上埋まっている時だけ罠を狙う
-const TRAP_PROB = { line: 0.45, plane: 0.35 };
-const TRAP_MAX_RATIO = 0.55;  // 生き残る手が全体のこれ以下なら「罠」とみなす
+// ラインは盤面が薄いまま推移するので、狙う下限を下げて確率と厳しさを上げる
+// (そうしないとラインではほとんど罠が出ず、難易度が上がらない)。
+const TRAP_MIN_FILL = { line: 0.10, plane: 0.17 };  // これ以上埋まっている時だけ罠を狙う
+const TRAP_PROB = { line: 0.55, plane: 0.35 };
+const TRAP_MAX_RATIO = { line: 0.42, plane: 0.55 }; // 生き残る手が全体のこれ以下なら「罠」
 const TRAP_MIN_SPOTS = 6;     // 置ける場所がこれ以上ある(=簡単そうに見える)のが条件
 const TRAP_SAMPLES = 6;       // 1ピースあたり調べる置き方の数
-const TRAP_COMBOS = 6;        // 調べる組の数
+const TRAP_COMBOS = 10;       // 調べる組の数
+
+// 罠/難問に使う「大物」ピース。
+// ラインは1列=5マスで消えるため盤面が薄いまま推移する(計測: ほぼ常に1〜3割)。
+// 薄い盤面では小さいピースはどこにでも置けてしまい、罠も一意解も原理的に成立しない。
+// 逆に大きいピースは置ける場所が限られるので、薄い盤面でも
+// 「置ける場所は多いのに、大半を選ぶと残り2つが入らなくなる」局面が作れる。
+const HARD_MIN_CELLS = 8;   // 大物とみなす最小マス数
+const HARD_POOL = 18;       // 大物を探すために引く回数
 
 const WAYS_CAP = 4;         // 「置き切れる並びの通り数」を数える上限。少ないほど最適解が一意=良い塩梅
 const SOLVABLE_POOL = 5;    // 通り数を比べるために集める「解ける組」の数
-const WAYS_MIN_FILL = 0.33; // これ以上埋まっている時だけ「締まった手(通り数)」を吟味する
-                            // (空盤では解が無数=吟味しても無意味な上に重い。序盤は素直に軽く配る)
+// これ以上埋まっている時だけ「締まった手(通り数)」を吟味する。
+// (空盤では解が無数=吟味しても無意味な上に重い。序盤は素直に軽く配る)
+// ラインは薄いまま推移するので、早めに吟味を始めないと締まらない。
+const WAYS_MIN_FILL = { line: 0.20, plane: 0.33 };
 
 const OP_CAP = 4500;        // dealHand 1回で許す allPlacements 探索の上限。重い盤面で打ち切り、
                             // リフィル時のカクつきを防ぐ(打ち切ってもフォールバックで手は配れる)
+
+// ---- ゲームの入り口: 「3つ置いたら全部消えた」という導入 ----
+// 空の盤面からしか作れないので、開始直後の数回だけ抽選する。
+const OPENING_DEALS = 3;    // 開始からこの回数までの配給が対象
+const OPENING_PROB = 0.5;   // 二分の一で仕込む
+
+// ---- プレーン限定: 「絶対ここに置くだろ」で気づいたら全消しイベント ----
+// 残りブロックを覆う面/線の空きを、そのままの形で3つに切り分けて配る。
+// どのピースも穴の形そのものなので置き場所に迷わず、自然に全消しになる。
+const OBVIOUS_PROB = { plane: 0.14, line: 0 };
+const OBVIOUS_MAX_FILL = 0.5;   // これより厚いと覆いの空きが3ピースに収まらない
+const OBVIOUS_MIN_GAP = 6;      // 空きが小さすぎるとピースが細切れで気持ちよくない
+
+const CARVE_PART_MAX = 9;   // 切り分けた1ピースの最大マス数(大きすぎる形にしない)
 
 const NONE = [];            // 消えなかった時の共有空配列 (中身は書き換えない)
 
@@ -82,6 +114,23 @@ export function dealHand(board, clear, makePiece, opts = {}) {
   const groups = collectGroups(board, clear);
   const filled = countFilled(board);
   const filledRatio = filled / board.cells.length;
+  const maxCells = opts.maxCells ?? Infinity;   // モードが許すピースの最大マス数
+
+  // ★ ゲームの入り口: 「3つ置き切ると盤面がまるごと消える」導入を二分の一で作る。
+  //   空の盤面からしか成立しないので、開始直後の数回だけ抽選する。
+  //   床の上だけを使うので、どのピースも必ず置ける(支えの条件を満たす)。
+  if (filled === 0 && (opts.dealNo ?? 99) < OPENING_DEALS && Math.random() < OPENING_PROB) {
+    const op = buildOpeningTrio(board, clear, maxCells);
+    if (op) return markFullClear(shuffle(op));
+  }
+
+  // ★ プレーン限定のイベント: 「絶対ここに置くだろ」という形を配って、
+  //   置いていったら気づけば全消しになっている、という気持ちよさを作る。
+  if ((OBVIOUS_PROB[clear] ?? 0) > 0 && filled > 0 && filledRatio <= OBVIOUS_MAX_FILL
+      && Math.random() < OBVIOUS_PROB[clear]) {
+    const ob = buildObviousClearTrio(board, clear, maxCells);
+    if (ob) return markFullClear(shuffle(ob));
+  }
 
   // ★ ごくたまに: 盤面をまるごと空にできる「全消し」手。埋まり具合が手頃な時だけ狙う。
   //   幾何的に不可能な盤面がほとんどなので、確率を掛けても実際に出るのはごく稀。
@@ -114,8 +163,14 @@ export function dealHand(board, clear, makePiece, opts = {}) {
   const checkHoles = filledRatio >= 0.24;
   const rd = READ[clear] || READ.line;   // 読みの重み(モード別)
 
+  // 分離した小さな空き(ポケット)に、そこへちょうどはまる形。
+  // ライン/面が消えるかどうかとは無関係に「ぴったり収まる」ことそのものを気持ちよさにする。
+  const pockets = filled > 0 ? pocketPieces(board, maxCells) : [];
+
   for (let round = 0; round < 2; round++) {
     const cands = [];
+    // 孤立した空きにぴったりの形を最優先で混ぜる (同時に入れるのは2つまで)
+    for (const p of pockets.slice(0, 2)) cands.push(p);
     // 空欄の形から作るピースを少しだけ混ぜる。既存ブロックに面した隙間に
     // ぴったり収まる形なので「ここに入れてほしかった形だ」という気持ちよさが出る。
     // ただし入れすぎると全部ぴったりで大味になるので少数だけ。
@@ -129,12 +184,19 @@ export function dealHand(board, clear, makePiece, opts = {}) {
     for (let i = cands.length; i < CANDIDATES; i++) cands.push(makePiece());
     for (const p of cands) {
       const r = bestFit(board, groups, p, pressure, checkHoles, rd);
-      p.fit = r.fit;
+      // ポケット用は必ず上位へ (置けないピースは加点しない = 候補から落ちるように)
+      p.fit = (p.pocket && r.fit > NO_FIT) ? r.fit + POCKET_BONUS : r.fit;
       p.target = r.target;     // 主に狙えるグループ (3つが同じ所を狙わないように使う)
       p.spots = r.spots;
     }
     const placeable = cands.filter((p) => p.fit > NO_FIT);
     placeable.sort((a, b) => b.fit - a.fit);   // はまり具合の良い順
+
+    // ★ 孤立した空きがあるなら、そこにぴったりはまる形を必ず1つ(あれば2つ)入れて配る
+    if (pockets.length) {
+      const pk = findPocketTrio(board, pockets, placeable);
+      if (pk) return shuffle(pk);
+    }
 
     // ご褒美: たまに大きく消せる組 (埋まっているほど出やすい)
     if (Math.random() < BIGCLEAR_PROB * (0.4 + filledRatio)) {
@@ -142,20 +204,34 @@ export function dealHand(board, clear, makePiece, opts = {}) {
       if (jp) return shuffle(jp);
     }
 
-    // ★ たまに罠: 置ける場所は多いのに、大半の置き方が詰みに繋がる組
-    if (filledRatio >= TRAP_MIN_FILL && opUsed < 900
-        && Math.random() < (TRAP_PROB[clear] ?? 0)) {
-      const tp = findTrapTrio(board, clear, placeable);
+    // 罠と難問はどちらも「置ける場所が限られる大物」でこそ成立する。
+    // 必要になった時だけ大物を引き直して吟味する(普段の配給は軽いまま)。
+    const wantTrap = filledRatio >= (TRAP_MIN_FILL[clear] ?? TRAP_MIN_FILL.line)
+      && opUsed < 900 && Math.random() < (TRAP_PROB[clear] ?? 0);
+    const wantTight = filledRatio >= (TIGHT_MIN_FILL[clear] ?? TIGHT_MIN_FILL.line)
+      && opUsed < 1400 && Math.random() < (TIGHT_PROB[clear] ?? 0);
+    const hard = (wantTrap || wantTight)
+      ? hardCandidates(board, groups, makePiece, pressure, checkHoles, rd) : [];
+    const hardOr = (list) => (hard.length >= 3 ? hard.concat(list) : list);
+
+    if (wantTrap || wantTight) {
+      const pool = hardOr(placeable);
+      // ★ たまに難問: 置き切れる並びが(ラインならただ一つしか)無い組
+      if (wantTight) {
+        const tg = findTightTrio(board, pool, TIGHT_MAX_WAYS[clear] ?? 2);
+        if (tg) { tg.tight = true; return shuffle(tg); }
+      }
+      // ★ たまに罠: 置ける場所は多いのに、大半の置き方が詰みに繋がる組。
+      //   盤面が薄くて並びの通り数を絞れない時は、これが「実質、正解は一つ」の代わりになる
+      //   (難問だけを狙っている時は、生き残る手がほぼ一つの組しか認めない)。
+      const maxRatio = wantTrap
+        ? (TRAP_MAX_RATIO[clear] ?? TRAP_MAX_RATIO.line) : TIGHT_MAX_RATIO;
+      const tp = findTrapTrio(board, clear, pool, maxRatio);
       if (tp) { tp.trap = true; return shuffle(tp); }
     }
 
-    // ★ たまに難問: 最適解ともう1つぐらいしか正解が無い、外すと詰む組を配る
-    if (opUsed < 900 && Math.random() < (TIGHT_PROB[clear] ?? 0)) {
-      const tg = findTightTrio(board, placeable);
-      if (tg) { tg.tight = true; return shuffle(tg); }
-    }
-
-    const trio = findSolvableTrio(board, placeable, filledRatio >= WAYS_MIN_FILL);
+    const waysFill = WAYS_MIN_FILL[clear] ?? WAYS_MIN_FILL.line;
+    const trio = findSolvableTrio(board, placeable, filledRatio >= waysFill);
     if (trio) return shuffle(trio);
     if (round === 1 && placeable.length >= 3) return shuffle(placeable.slice(0, 3));
   }
@@ -280,6 +356,106 @@ function synthesizeTrio(board) {
   return trio.length === 3 ? shuffle(trio) : null;
 }
 
+// ---- 分離した空き(ポケット)にぴったりはまるピース ----
+//
+// 盤面が育ってくると、まわりを完全にブロックで囲まれた小さな空き
+// (=空きの連結成分としてほかの空きから分離した領域) ができる。
+// そこにちょうど収まる形を作って配ると、「その穴のための形だ」という収まりの
+// 気持ちよさが出る。ライン/面が消えるかどうかとは無関係に配る。
+
+const POCKET_MIN = 2;      // これ未満(1マス)は形として面白くないので対象外
+const POCKET_MAX = 8;      // これを超える空きは「ポケット」ではなく普通の空間
+const POCKET_BONUS = 40;   // 候補の並びで必ず上位に来るようにする加点
+
+/** 空きセルの連結成分のうち、小さく分離しているもの(=ポケット)を集める */
+function collectPockets(board, maxCells) {
+  const n = board.n;
+  const lim = Math.min(POCKET_MAX, maxCells);
+  const seen = new Uint8Array(board.cells.length);
+  const out = [];
+  for (let k = 0; k < board.cells.length; k++) {
+    if (board.cells[k] || seen[k]) continue;
+    const comp = [];
+    const stack = [k];
+    seen[k] = 1;
+    let over = false;
+    while (stack.length) {
+      const c = stack.pop();
+      comp.push(c);
+      if (comp.length > POCKET_MAX) over = true;   // 大きい=ポケットではない(走査だけ続ける)
+      const [x, y, z] = cellOf(n, c);
+      for (const [dx, dy, dz] of NB) {
+        const px = x + dx, py = y + dy, pz = z + dz;
+        if (!board.inBounds(px, py, pz)) continue;
+        const nk = board.idx(px, py, pz);
+        if (board.cells[nk] || seen[nk]) continue;
+        seen[nk] = 1;
+        stack.push(nk);
+      }
+    }
+    if (over || comp.length < POCKET_MIN || comp.length > lim) continue;
+    out.push(comp);
+  }
+  // 小さい穴ほど「そこにしか入らない形」になって収まりが良い
+  out.sort((a, b) => a.length - b.length);
+  return out;
+}
+
+/** ポケットの形そのままのピースを作る (anchor = そこにぴったり置ける位置) */
+function pocketPieces(board, maxCells) {
+  const out = [];
+  for (const comp of collectPockets(board, maxCells)) {
+    const p = cellsToPiece(board, comp);
+    if (!board.canPlace(p.cells, p.anchor[0], p.anchor[1], p.anchor[2])) continue;
+    p.pocket = true;
+    out.push(p);
+  }
+  return out;
+}
+
+/**
+ * ポケット用のピースを必ず含む「3つとも置き切れる組」を作る。
+ * ポケットが2つあるときは2つとも入れる組を先に試す。
+ */
+function findPocketTrio(board, pockets, placeable) {
+  const others = placeable.filter((p) => !p.pocket);
+  const packs = [];
+  if (pockets.length >= 2) packs.push(pockets.slice(0, 2));
+  for (const p of pockets.slice(0, 2)) packs.push([p]);
+
+  for (const base of packs) {
+    const need = 3 - base.length;
+    const M = Math.min(others.length, 10);
+    if (M < need) continue;
+    const combos = [];
+    if (need === 1) for (let i = 0; i < M; i++) combos.push([i]);
+    else for (let i = 0; i < M; i++) for (let j = i + 1; j < M; j++) combos.push([i, j]);
+    shuffle(combos);
+    let checked = 0;
+    for (const c of combos) {
+      if (checked++ > 24 || opUsed > OP_CAP) break;
+      const trio = base.concat(c.map((i) => others[i]));
+      if (isSolvable(board, trio)) return trio;
+    }
+  }
+  return null;
+}
+
+/** セル index から座標へ */
+function cellOf(n, k) {
+  return [k % n, Math.floor(k / n) % n, Math.floor(k / (n * n))];
+}
+
+/** セル index の集まりを、正規化済みピース + 元の位置(anchor) にする */
+function cellsToPiece(board, idxList) {
+  const n = board.n;
+  const cells = idxList.map((k) => cellOf(n, k));
+  const m = [0, 1, 2].map((i) => Math.min(...cells.map((c) => c[i])));
+  const norm = cells.map((c) => [c[0] - m[0], c[1] - m[1], c[2] - m[2]]);
+  const span = [0, 1, 2].map((i) => Math.max(...norm.map((c) => c[i])) + 1);
+  return { cells: norm, shape: shapeKey(norm), span, anchor: m };
+}
+
 /**
  * 3ピースが「別々の狙い」を持っているか (狙えるグループの種類数)。
  * 3つとも同じラインを狙う組は、1つ置いた時点で残り2つが用済みになって薄い。
@@ -300,7 +476,7 @@ function markFullClear(trio) {
 /** この手が「段階的な全消し」の途中(置けばブロックが減る)であることの目印 */
 function markRun(trio, left) {
   trio.clearRun = true;
-  trio.runLeft = left;     // うまく置いたときに残るブロック数(進捗表示用)
+  trio.runLeft = left;     // うまく置いたときに残るブロック数
   return trio;
 }
 
@@ -546,16 +722,39 @@ function findSolvableTrio(board, placeable, tight) {
 }
 
 /**
+ * 罠/難問のための「大物」候補を引く。
+ * 大きいピースは置ける場所が限られるので、盤面が薄くても
+ * 「一手まちがえると残りが入らない」局面を作れる(小物ではどこにでも置けて成立しない)。
+ */
+function hardCandidates(board, groups, makePiece, pressure, checkHoles, rd) {
+  const out = [];
+  for (let i = 0; i < HARD_POOL; i++) {
+    const p = makePiece();
+    if (p.cells.length < HARD_MIN_CELLS) continue;
+    const r = bestFit(board, groups, p, pressure, checkHoles, rd);
+    if (r.fit <= NO_FIT) continue;               // どこにも置けない大物は捨てる
+    p.fit = r.fit;
+    p.target = r.target;
+    p.spots = r.spots;
+    out.push(p);
+  }
+  out.sort((a, b) => b.cells.length - a.cells.length);   // 大きいものから試す
+  return out;
+}
+
+/**
  * 「罠」の組を探す。
  * 置ける場所はたくさんあるのに、その大半が「置いた瞬間に残りが置けなくなる」組。
  * 簡単そうに見えて、置き場所を間違えると死ぬ = 判断が効く歯応え。
  * 生き残る手が1つも無い組は返さない(正解は必ず存在する)。
  */
-function findTrapTrio(board, clear, placeable) {
+function findTrapTrio(board, clear, placeable, maxRatio) {
   const P = placeable.length;
   if (P < 3) return null;
-  // 「置ける場所が多い」ピースだけを対象にする(いかにも簡単そうに見える手にするため)
-  const roomy = placeable.filter((p) => (p.spots ?? 0) >= TRAP_MIN_SPOTS);
+  // 「置ける場所が多い」ピースを対象にする(いかにも簡単そうに見える手にするため)。
+  // 大物は置ける場所こそ少ないが、罠が成立するのはむしろ大物なので必ず残す。
+  const roomy = placeable.filter((p) =>
+    (p.spots ?? 0) >= TRAP_MIN_SPOTS || p.cells.length >= HARD_MIN_CELLS);
   const pool = roomy.length >= 3 ? roomy : placeable;
   const M = Math.min(pool.length, 10);
 
@@ -565,17 +764,17 @@ function findTrapTrio(board, clear, placeable) {
       for (let k = j + 1; k < M; k++) combos.push([i, j, k]);
   shuffle(combos);
 
-  const budget = opUsed + 1100;
+  const budget = opUsed + 1400;
   let best = null, bestRatio = Infinity, checked = 0;
   for (const [i, j, k] of combos) {
     if (checked++ > TRAP_COMBOS || opUsed > budget || opUsed > OP_CAP) break;
     const trio = [pool[i], pool[j], pool[k]];
     const q = trapQuality(board, clear, trio);
-    // 盤面がまだ安全すぎる(どこに置いても死なない)なら、探しても無駄なので即やめる。
-    // ライン中盤のような薄い盤面ではここで抜けるので、配給が重くならない。
-    if (checked === 1 && q.total > 0 && q.ratio > 0.85) return null;
+    // どこに置いても死なない組ばかりなら、この盤面では罠が作れない。
+    // 無駄に探し続けて配給を重くしないよう、早めに切り上げる。
+    if (checked >= 3 && !best && q.ratio > 0.97) return null;
     if (q.safe === 0) continue;                 // 正解が無い組は配らない
-    if (q.ratio <= TRAP_MAX_RATIO && q.ratio < bestRatio) {
+    if (q.ratio <= maxRatio && q.ratio < bestRatio) {
       bestRatio = q.ratio;
       best = trio;
       if (q.ratio <= 0.12) break;               // 十分に罠。これ以上探さない
@@ -617,11 +816,12 @@ function trapQuality(board, clear, trio) {
 
 /**
  * 「正解がほぼ一つしかない」難問の組を探す。
- * 3つを置き切れる並びが 1〜TIGHT_MAX_WAYS 通りしかない = 最適解(かもう1つ)を
+ * 3つを置き切れる並びが 1〜maxWays 通りしかない = 最適解(かもう1つ)を
  * 見つけられなければ詰む、という歯応えのある組。
  * 通り数 0(置き切れない)は詰み確定なので絶対に返さない = 詰み防止の保証は保つ。
+ * 「一意」と言い切るために、ここだけは通り数の枝を広げて数える(TIGHT_BRANCH)。
  */
-function findTightTrio(board, placeable, maxWays = TIGHT_MAX_WAYS) {
+function findTightTrio(board, placeable, maxWays = 2) {
   const P = placeable.length;
   if (P < 3) return null;
   const M = Math.min(P, 12);
@@ -631,12 +831,12 @@ function findTightTrio(board, placeable, maxWays = TIGHT_MAX_WAYS) {
       for (let k = j + 1; k < M; k++) combos.push([i, j, k]);
   shuffle(combos);
 
-  const budget = opUsed + 1100;   // 難問探索だけの上限(リフィルを重くしない)
+  const budget = opUsed + 1400;   // 難問探索だけの上限(リフィルを重くしない)
   let fallback = null, checked = 0;
   for (const [i, j, k] of combos) {
-    if (checked++ > 28 || opUsed > budget || opUsed > OP_CAP) break;
+    if (checked++ > 34 || opUsed > budget || opUsed > OP_CAP) break;
     const trio = [placeable[i], placeable[j], placeable[k]];
-    const ways = countWays(board, trio, maxWays + 1);
+    const ways = countWays(board, trio, maxWays + 1, TIGHT_BRANCH);
     if (ways === 0) continue;              // 置き切れない組は配らない(保証)
     if (ways === 1) return trio;           // 正解がただ一つ = いちばん歯応えがある
     if (ways <= maxWays && !fallback) fallback = trio;
@@ -650,7 +850,7 @@ function findTightTrio(board, placeable, maxWays = TIGHT_MAX_WAYS) {
  * 少ない=最適解が絞れる。多い=どこにでも置けてゆるい(=単調)。
  * isSolvable と同じ「消去は考えない」モデルで数えるので保証と整合する。
  */
-function countWays(board, trio, cap) {
+function countWays(board, trio, cap, branch = BRANCH_CAP) {
   const seen = new Set();
   const idOf = new Map(trio.map((p, i) => [p, i]));
   const key = [];
@@ -662,7 +862,7 @@ function countWays(board, trio, cap) {
       const pl = PL(board, p.cells);
       pl.sort((a, b) => a[1] - b[1]);   // 低い位置優先(isSolvable と揃える)
       const rest = rem.filter((_, j) => j !== i);
-      const c = Math.min(pl.length, BRANCH_CAP);
+      const c = Math.min(pl.length, branch);
       for (let n = 0; n < c; n++) {
         if (seen.size >= cap) return;
         const pos = pl[n];
@@ -707,33 +907,7 @@ const TILE_NODE_CAP = 4500;   // 「試した置き方」の総数上限 (内側
  * @returns {object[]|null} 全消しできる3ピース
  */
 function buildClearAllTrio(board, clear, makePiece) {
-  const n = board.n;
-  const filled = [];
-  for (let x = 0; x < n; x++)
-    for (let y = 0; y < n; y++)
-      for (let z = 0; z < n; z++)
-        if (board.get(x, y, z)) filled.push(board.idx(x, y, z));
-  if (!filled.length) return null;
-
-  // グループ(ライン or 面)ごとのセル一覧
-  const groups = [];
-  if (clear === "plane") {
-    for (let axis = 0; axis < 3; axis++)
-      for (let f = 0; f < n; f++) {
-        const cells = [];
-        for (let i = 0; i < n; i++)
-          for (let j = 0; j < n; j++) cells.push(board.idx(...planeCell(axis, f, i, j)));
-        groups.push(cells);
-      }
-  } else {
-    for (let axis = 0; axis < 3; axis++)
-      for (let a = 0; a < n; a++)
-        for (let b = 0; b < n; b++) {
-          const cells = [];
-          for (let i = 0; i < n; i++) cells.push(board.idx(...axisCell(axis, i, a, b)));
-          groups.push(cells);
-        }
-  }
+  if (!countFilled(board)) return null;
 
   // 候補ピース(回転違いを広く。形+向きで重複を除く)
   const pool = [];
@@ -747,42 +921,11 @@ function buildClearAllTrio(board, clear, makePiece) {
   }
   if (pool.length < 3) return null;
 
-  // 覆い方を数通り試す。狙いは「本数を減らす」ことではなく「埋める空きを小さくする」こと。
-  //  → すでにほぼ埋まっている線(足す空きが少ない線)を優先する貪欲。
-  //    ランダムなタイブレークで毎回わずかに違う覆いを試し、別解を狙う。
+  // 覆い方を数通り試す (coverGap はランダムなタイブレークで毎回わずかに違う覆いを返す)
   for (let attempt = 0; attempt < 3; attempt++) {
     if (opUsed > OP_CAP) break;   // 予算切れ: 全消しは諦めて通常配給へ
-    const need = new Set(filled);
-    const gapSet = new Set();
-    let ok = true;
-    for (let step = 0; need.size && step < TILE_MAX_COVER; step++) {
-      let best = null, bestScore = -Infinity;
-      for (const g of groups) {
-        let gain = 0, add = 0, ySum = 0, yN = 0;
-        for (const k of g) {
-          if (need.has(k)) gain++;
-          else if (!board.cells[k] && !gapSet.has(k)) {
-            add++;
-            ySum += Math.floor(k / n) % n;   // 埋めることになる空きの高さ
-            yN++;
-          }
-        }
-        if (!gain) continue;
-        // 覆える数が多く、新たに埋める空きが少ないほど良い。
-        // さらに空きが低い位置(床や既存ブロックに支えられる所)にあるものを優先する。
-        // 宙に浮いた空きは「支え」の制約で実際には置けず、全消しが成立しないため。
-        const avgY = yN ? ySum / yN : 0;
-        const score = gain / (1 + add) - avgY * 0.35 + Math.random() * 0.15;
-        if (score > bestScore) { bestScore = score; best = g; }
-      }
-      if (!best) { ok = false; break; }
-      for (const k of best) {
-        need.delete(k);
-        if (!board.cells[k]) gapSet.add(k);
-      }
-      if (gapSet.size > TILE_MAX_GAP) { ok = false; break; }   // 埋めきれない
-    }
-    if (!ok || need.size || !gapSet.size || gapSet.size > TILE_MAX_GAP) continue;
+    const gapSet = coverGap(board, clear, TILE_MAX_GAP);
+    if (!gapSet) continue;
 
     // 空きが4つ以上に分断されていると、連結した3ピースでは埋めきれない(早期棄却)
     if (countComponents(board, gapSet) > 3) continue;
@@ -811,6 +954,224 @@ function buildClearAllTrio(board, clear, makePiece) {
     }
   }
   return null;
+}
+
+/**
+ * 「ここを埋めれば盤面のブロックが全部消える」空き領域を求める。
+ * 残っているブロックをグループ(ライン/面)で覆い、その中の空きセルを集める。
+ * 狙いは「覆う本数を減らす」ことではなく「埋める空きを小さくする」こと:
+ *   → すでにほぼ埋まっているグループ(足す空きが少ない)を優先する貪欲。
+ *   → さらに空きが低い位置(床や既存ブロックに支えられる所)にある覆いを優先する。
+ *     宙に浮いた空きは「支え」の制約で実際には置けず、全消しが成立しないため。
+ * ランダムなタイブレークを入れてあるので、呼ぶたびに少し違う覆いが返る。
+ * @returns {Set<number>|null} 埋めるべき空きセルの index 集合
+ */
+function coverGap(board, clear, maxGap) {
+  const n = board.n;
+  const need = new Set();
+  for (let k = 0; k < board.cells.length; k++) if (board.cells[k]) need.add(k);
+  if (!need.size) return null;
+
+  const groups = groupCellsOf(board, clear);
+  const gapSet = new Set();
+  for (let step = 0; need.size && step < TILE_MAX_COVER; step++) {
+    let best = null, bestScore = -Infinity;
+    for (const g of groups) {
+      let gain = 0, add = 0, ySum = 0, yN = 0;
+      for (const k of g) {
+        if (need.has(k)) gain++;
+        else if (!board.cells[k] && !gapSet.has(k)) {
+          add++;
+          ySum += Math.floor(k / n) % n;   // 埋めることになる空きの高さ
+          yN++;
+        }
+      }
+      if (!gain) continue;
+      const avgY = yN ? ySum / yN : 0;
+      const score = gain / (1 + add) - avgY * 0.35 + Math.random() * 0.15;
+      if (score > bestScore) { bestScore = score; best = g; }
+    }
+    if (!best) return null;
+    for (const k of best) {
+      need.delete(k);
+      if (!board.cells[k]) gapSet.add(k);
+    }
+    if (gapSet.size > maxGap) return null;   // 埋めきれない
+  }
+  if (need.size || !gapSet.size) return null;
+  return gapSet;
+}
+
+// ---- 領域を3つに切り分けて、そのままピースにする ----
+//
+// ランダムなピースが偶然ぴったり収まるのを待つのではなく、
+// 「埋めてほしい空きの形」そのものを3つに割ってピースにしてしまう。
+// どのピースも穴の形なので、置き場所に迷わない=「絶対ここに置くだろ」になる。
+
+/**
+ * 空き領域を、連結な3つの塊に切り分けてピースにする。
+ * @returns {object[]|null} 3ピース (cells は正規化済み / anchor = そこにぴったり置ける位置)
+ */
+function carveRegion(board, regionSet, maxCells) {
+  const partMax = Math.min(maxCells, CARVE_PART_MAX);
+  const size = regionSet.size;
+  if (size < 3 || size > partMax * 3) return null;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const remain = new Set(regionSet);
+    const parts = [];
+    let ok = true;
+    for (let i = 0; i < 3 && ok; i++) {
+      const left = 3 - i;
+      if (left === 1) {                       // 最後の1つは残り全部 (連結なら採用)
+        if (remain.size > partMax || !isConnectedSet(board, remain)) ok = false;
+        else parts.push([...remain]);
+        break;
+      }
+      // 残りが次以降の枠に収まるように、大きさの範囲を決める
+      const lo = Math.max(1, remain.size - partMax * (left - 1));
+      const hi = Math.min(partMax, remain.size - (left - 1));
+      if (lo > hi) { ok = false; break; }
+      const even = Math.round(remain.size / left);
+      const jitter = Math.random() < 0.34 ? (Math.random() < 0.5 ? -1 : 1) : 0;
+      const want = Math.max(lo, Math.min(hi, even + jitter));
+      const part = growInSet(board, remain, want);
+      if (!part) { ok = false; break; }
+      for (const k of part) remain.delete(k);
+      if (!isConnectedSet(board, remain)) { ok = false; break; }   // 残りが割れたらやり直し
+      parts.push(part);
+    }
+    if (ok && parts.length === 3) return parts.map((p) => cellsToPiece(board, p));
+  }
+  return null;
+}
+
+/** 集合の中で連結な want マスを育てる (種はランダム) */
+function growInSet(board, set, want) {
+  const n = board.n;
+  const list = [...set];
+  const seed = list[Math.floor(Math.random() * list.length)];
+  const chosen = [seed];
+  const inSet = new Set([seed]);
+  while (chosen.length < want) {
+    const cand = [];
+    for (const k of chosen) {
+      const [x, y, z] = cellOf(n, k);
+      for (const [dx, dy, dz] of NB) {
+        const px = x + dx, py = y + dy, pz = z + dz;
+        if (!board.inBounds(px, py, pz)) continue;
+        const nk = board.idx(px, py, pz);
+        if (set.has(nk) && !inSet.has(nk)) cand.push(nk);
+      }
+    }
+    if (!cand.length) return null;
+    const pick = cand[Math.floor(Math.random() * cand.length)];
+    chosen.push(pick);
+    inSet.add(pick);
+  }
+  return chosen;
+}
+
+/** セル index 集合がひとつながりか (空集合は連結とみなす) */
+function isConnectedSet(board, set) {
+  if (set.size <= 1) return true;
+  const n = board.n;
+  const start = set.values().next().value;
+  const seen = new Set([start]);
+  const stack = [start];
+  while (stack.length) {
+    const [x, y, z] = cellOf(n, stack.pop());
+    for (const [dx, dy, dz] of NB) {
+      const px = x + dx, py = y + dy, pz = z + dz;
+      if (!board.inBounds(px, py, pz)) continue;
+      const nk = board.idx(px, py, pz);
+      if (set.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+    }
+  }
+  return seen.size === set.size;
+}
+
+/**
+ * 切り分けた3ピースを「それぞれの穴の位置に」置いていったら盤面が空になるか。
+ * 途中で線/面が消えて支えが変わることがあるので、置く順を総当りで確かめる。
+ * これが通れば「狙いどおりに置けば必ず全消しになる」ことが保証される。
+ */
+function canEmptyAtAnchors(board, clear, parts) {
+  const snap = board.cells.slice();
+  let ok = false;
+  const dfs = (rem) => {
+    if (ok) return;
+    if (!rem.length) { ok = board.isEmptyBoard(); return; }
+    for (let i = 0; i < rem.length; i++) {
+      const p = rem[i];
+      const [ax, ay, az] = p.anchor;
+      if (!board.canPlace(p.cells, ax, ay, az)) continue;
+      board.place(p.cells, ax, ay, az);
+      const gs = board.completedGroups(clear);
+      const cleared = gs.length ? board.clearLines(gs) : NONE;
+      dfs(rem.filter((_, j) => j !== i));
+      for (let t = 0; t < cleared.length; t++)
+        board.set(cleared[t][0], cleared[t][1], cleared[t][2], 1);
+      board.unplace(p.cells, ax, ay, az);
+      if (ok) return;
+    }
+  };
+  dfs(parts);
+  board.cells.set(snap);
+  return ok;
+}
+
+/**
+ * ゲームの入り口用: 空の盤面に「3つ置き切ると盤面がまるごと消える」組を作る。
+ * 使うのは床(y=0)の上だけなので、どのピースも支えの条件を満たして必ず置ける。
+ *   line : 床の上の平行な3本のライン (5×3 = 15マス)
+ *   plane: 床の面まるごと (5×5 = 25マス)
+ * 1ピースだけで消えてしまう切り分けは、ご褒美が細切れになるので避ける。
+ */
+function buildOpeningTrio(board, clear, maxCells) {
+  const n = board.n;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const region = new Set();
+    if (clear === "plane") {
+      for (let x = 0; x < n; x++)
+        for (let z = 0; z < n; z++) region.add(board.idx(x, 0, z));
+    } else {
+      const axis = Math.random() < 0.5 ? 0 : 2;              // 床の上の x方向 or z方向
+      const picks = shuffle([...Array(n).keys()]).slice(0, 3);
+      for (const b of picks)
+        for (let i = 0; i < n; i++)
+          region.add(axis === 0 ? board.idx(i, 0, b) : board.idx(b, 0, i));
+    }
+    const parts = carveRegion(board, region, maxCells);
+    if (!parts) continue;
+    if (parts.some((p) => completesAlone(board, clear, p))) continue;
+    if (canEmptyAtAnchors(board, clear, parts)) return parts;
+  }
+  return null;
+}
+
+/**
+ * 「絶対ここに置くだろ」を作って、置いていったら全消しになっているイベント用。
+ * 残っているブロックを覆う空き(= 埋めれば全部消える所)を、そのままの形で3つに割る。
+ */
+function buildObviousClearTrio(board, clear, maxCells) {
+  const partMax = Math.min(maxCells, CARVE_PART_MAX);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const gap = coverGap(board, clear, partMax * 3);
+    if (!gap || gap.size < OBVIOUS_MIN_GAP) continue;
+    const parts = carveRegion(board, gap, maxCells);
+    if (parts && canEmptyAtAnchors(board, clear, parts)) return parts;
+  }
+  return null;
+}
+
+/** そのピース単体を狙いの位置に置いただけでライン/面が消えてしまうか */
+function completesAlone(board, clear, piece) {
+  const [ax, ay, az] = piece.anchor;
+  board.place(piece.cells, ax, ay, az);
+  const hit = board.completedGroups(clear).length > 0;
+  board.unplace(piece.cells, ax, ay, az);
+  return hit;
 }
 
 /** 空き領域が何個の塊に分かれているか (連結成分数) */
@@ -966,23 +1327,6 @@ function quickClearPotential(board, clear, piece) {
     if (cc > best) best = cc;
   }
   return best;
-}
-
-/**
- * いまの盤面と手持ちで「盤面をまるごと空(全消し)」にできる並びがまだ残っているか。
- * ゲーム側が「全消しチャンス」の告知を出す/引っ込めるのに使う。
- * 配給時だけでなく1手ごとに呼べるよう、探索は canEmptyBoard の枝刈り予算内で打ち切る。
- * (ディーラーが仕込んだチャンスは同じ探索で見つけたものなので、正しく置いている限り
- *  次の手でも見つかる。置き方を誤ってチャンスが消えたら false になる)
- * @returns {boolean}
- */
-export function canClearAll(board, clear, pieces) {
-  const live = pieces.filter(Boolean);
-  if (!live.length || board.isEmptyBoard()) return false;
-  opUsed = 0;   // 単発チェックなので予算をリセットして与える
-  // 配給1回で何度も回す用途より探索を厚くする。ここをケチると
-  // ディーラーが仕込んだチャンスを告知側が取りこぼす(=気づけない)。
-  return canEmptyBoard(board, clear, live, 700);
 }
 
 /**
@@ -1375,9 +1719,12 @@ export function solveHandBest(board, clear, pieces, score, combo = 0) {
 /**
  * 現在の手札(残っているピース)を置き切る手順を1つ探して返す。
  * 全部置ける解があればそれを、無ければ「最も多く置ける」部分解を返す。
- * @returns {{piece, pos:[x,y,z]}[]}  置く順の配列 (現在の盤面に順に place できる)
+ * 再生側は置くたびに実際に消すので、この探索でも消去をシミュレートする
+ * (「先に1列そろえて場所を空けてから残りを置く」手順も見つけられるように)。
+ * 盤面は必ず元に戻す。
+ * @returns {{piece, pos:[x,y,z]}[]}  置く順の配列 (順に place していける)
  */
-export function solveHand(board, pieces) {
+export function solveHand(board, pieces, clear = "line") {
   const live = pieces.filter(Boolean);
   let best = [];
   const dfs = (rem, path) => {
@@ -1394,15 +1741,21 @@ export function solveHand(board, pieces) {
       for (let k = 0; k < cap; k++) {
         const pos = pl[k];
         board.place(p.cells, pos[0], pos[1], pos[2]);
+        const gs = board.completedGroups(clear);
+        const cleared = gs.length ? board.clearLines(gs) : NONE;
         path.push({ piece: p, pos: [pos[0], pos[1], pos[2]] });
         const full = dfs(rest, path);
-        board.unplace(p.cells, pos[0], pos[1], pos[2]);
         path.pop();
+        for (let t = 0; t < cleared.length; t++)
+          board.set(cleared[t][0], cleared[t][1], cleared[t][2], 1);   // 消去を戻す
+        board.unplace(p.cells, pos[0], pos[1], pos[2]);
         if (full) return true;
       }
     }
     return false;
   };
+  const snap = board.cells.slice();
   dfs(live, []);
+  board.cells.set(snap);
   return best;
 }
