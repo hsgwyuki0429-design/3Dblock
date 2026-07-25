@@ -156,14 +156,29 @@ let xrayOn = false;
 
 let tone = TONES[0];        // 現在のトーン
 let toneStage = 0;          // スコアで何段目まで進んだか (トーン数を超えたら先頭へ回る)
+let colorShift = 0;         // コンボのたびに +1。色の割り当てをずらして全体の色を変える
+let darkMode = false;       // 背景を黒にするモード (トーンとは別の、いつでも切り替えられる設定)
+
+// 背景を黒にするモードの舞台。色(パレット)はトーンのものをそのまま使う
+const DARK_LOOK = {
+  dark: true,
+  dome: ["#1c1c20", "#0c0c0f", "#000000"],
+  floor: 0x141418, grid: 0x50505c, cage: 0x50505c,
+  emissive: 0.4, env: 0.34,
+  light: { ambient: 0.45, key: 0.95, fill: 0.25, exposure: 1.0 },
+};
+
+/** いま舞台に使う見た目 (ダークモード中はトーンの色合いだけ borrow する) */
+const look = () => (darkMode ? DARK_LOOK : tone);
 
 function toneColor(ci) {
   const p = tone.palette;
-  return p[((ci | 0) % p.length + p.length) % p.length];
+  const i = (ci | 0) + colorShift;
+  return p[((i % p.length) + p.length) % p.length];
 }
 
-const toneEmissive = () => tone.emissive ?? BASE_EMISSIVE;   // ブロックの発光の強さ
-const toneEnv = () => tone.env ?? 0.75;                      // 映り込みの強さ
+const toneEmissive = () => look().emissive ?? BASE_EMISSIVE;   // ブロックの発光の強さ
+const toneEnv = () => look().env ?? 0.75;                      // 映り込みの強さ
 
 function makeBlockMaterial(color) {
   return new THREE.MeshStandardMaterial({
@@ -244,7 +259,7 @@ function buildStage() {
   // 床プレート (マットな明るい面、柔らかい接地影を受ける)
   const plateGeo = new RoundedBoxGeometry(N + 0.7, 0.2, N + 0.7, 4, 0.08);
   const plateMat = new THREE.MeshStandardMaterial({
-    color: tone.floor, roughness: 0.95, metalness: 0.0, envMapIntensity: 0.3,
+    color: look().floor, roughness: 0.95, metalness: 0.0, envMapIntensity: look().dark ? 0.12 : 0.3,
   });
   floorPlate = new THREE.Mesh(plateGeo, plateMat);
   floorPlate.position.y = -0.1;
@@ -261,14 +276,14 @@ function buildStage() {
   gridGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
   gridLines = new THREE.LineSegments(
     gridGeo,
-    new THREE.LineBasicMaterial({ color: tone.grid, transparent: true, opacity: 0.9 })
+    new THREE.LineBasicMaterial({ color: look().grid, transparent: true, opacity: 0.9 })
   );
   stageGroup.add(gridLines);
 
   // 外枠ケージ (立体の範囲を示す極薄ライン)
   cageLines = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.BoxGeometry(N, N, N)),
-    new THREE.LineBasicMaterial({ color: tone.cage, transparent: true, opacity: 0.5 })
+    new THREE.LineBasicMaterial({ color: look().cage, transparent: true, opacity: 0.5 })
   );
   cageLines.position.y = N / 2;
   stageGroup.add(cageLines);
@@ -280,27 +295,32 @@ function buildStage() {
 // まとめて次のトーンへ着替える。色は ci(パレット番号)で持っているので、
 // 引き当て先のトーンを変えるだけで全部つながって変わる。
 
-/** ドーム(CSS背景)を今のトーンの色にする */
+/** ドーム(CSS背景)を今の見た目の色にする */
 function applyDome() {
-  const [a, b, c] = tone.dome;
+  const v = look();
+  const [a, b, c] = v.dome;
   const s = document.documentElement.style;
   s.setProperty("--dome-1", a);
   s.setProperty("--dome-2", b);
   s.setProperty("--dome-3", c);
   document.body.dataset.tone = tone.key;
-  // 暗いドームのトーンでは HUD の文字色などを明るい側へ反転する (CSS 側で対応)
-  document.body.dataset.dark = tone.dark ? "1" : "0";
+  // 暗いドームでは HUD の文字色などを明るい側へ反転する (CSS 側で対応)
+  document.body.dataset.dark = v.dark ? "1" : "0";
+  // ブラウザのバーの色も合わせる
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", v.dome[1]);
 }
 
-/** 舞台(床・グリッド・ケージ)と光の当て方を今のトーンに合わせる */
+/** 舞台(床・グリッド・ケージ)と光の当て方を今の見た目に合わせる */
 function applyStageTone() {
+  const v = look();
   if (floorPlate) {
-    floorPlate.material.color.setHex(tone.floor);
-    floorPlate.material.envMapIntensity = tone.dark ? 0.12 : 0.3;
+    floorPlate.material.color.setHex(v.floor);
+    floorPlate.material.envMapIntensity = v.dark ? 0.12 : 0.3;
   }
-  if (gridLines) gridLines.material.color.setHex(tone.grid);
-  if (cageLines) cageLines.material.color.setHex(tone.cage);
-  const L = tone.light || {};
+  if (gridLines) gridLines.material.color.setHex(v.grid);
+  if (cageLines) cageLines.material.color.setHex(v.cage);
+  const L = v.light || {};
   ambLight.intensity = L.ambient ?? AMBIENT0;
   keyLight.intensity = L.key ?? KEY0;
   fillLight.intensity = L.fill ?? FILL0;
@@ -362,6 +382,30 @@ function setTone(idx, { animate = true, announce = false } = {}) {
     sfx.chance();
     if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
   }
+}
+
+// ダークモードのボタン用アイコン (月=いまは明るい / 太陽=いまは暗い)
+const ICON_MOON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13.5A8.5 8.5 0 0 1 10.5 4a7.5 7.5 0 1 0 9.5 9.5z"/></svg>`;
+const ICON_SUN = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></svg>`;
+
+/** 背景を黒にするモードの切り替え */
+function setDarkMode(on, save = true) {
+  darkMode = !!on;
+  if (save) store.set("dark", darkMode ? "1" : "0");
+  applyDome();
+  applyStageTone();
+  repaintBlocks(true);     // 発光・映り込みの強さが変わるので塗り直す
+  const btn = $("btnDark");
+  if (btn) {
+    btn.innerHTML = darkMode ? ICON_SUN : ICON_MOON;
+    btn.classList.toggle("on", darkMode);
+  }
+}
+
+/** コンボが続くたびに色の割り当てをずらして、盤面ごと色を変える */
+function bumpColorShift() {
+  colorShift = (colorShift + 1) % tone.palette.length;
+  repaintBlocks(true);
 }
 
 /** いまのスコアが何番目のトーンにあたるか */
@@ -957,6 +1001,8 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
 
 function doClear(groups, nearCell) {
   combo++;
+  // コンボが続いている間は、消すたびに盤面ごと色をずらす (連鎖が目に見えて楽しい)
+  if (combo >= 2) bumpColorShift();
   const cleared = board.clearLines(groups);
   const pts =
     cleared.length * SCORE.perClearedCell * groups.length +
@@ -978,12 +1024,18 @@ function doClear(groups, nearCell) {
     if (mode.clear === "plane") spawnSheet(group);
     else spawnBeam(group);
     spawnRing(group);
-    // ブロックを虹色にルーレットさせてから弾く (面は数が多いので出だしのずれを抑える)
+    // ブロックを虹色にルーレットさせてから弾く (面は数が多いので出だしのずれを抑える)。
+    // 演出に入った時点で盤面からは完全に切り離す = 見た目が残っていても、
+    // そのマスにはもう次のピースを置ける(当たり判定も影も残さない)。
     group.cells.forEach((cell, i) => {
       const mesh = blockMeshes.get(board.idx(...cell));
       if (!mesh) return;
       blockMeshes.delete(board.idx(...cell));
-      anims.push(rouletteVanish(mesh, Math.min(i * 0.02, 0.16), i));
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      blocksGroup.remove(mesh);
+      fxGroup.add(mesh);            // 演出レイヤーへ引っ越し(盤面のブロックではなくなる)
+      anims.push(rouletteVanish(mesh, Math.min(i * 0.025, 0.2), i));
     });
     spawnBurst(group.cells, { per: 7, size: 0.34, life: 0.85 });
   }
@@ -1048,6 +1100,17 @@ function spawnRainbowRing(center, delay, hue) {
     if (k >= 1) { fxGroup.remove(m); geo.dispose(); mat.dispose(); return false; }
     return true;
   });
+}
+
+/** 消える演出の途中で残っているブロックを片付ける (ゲームを作り直すとき用) */
+function clearFadingBlocks() {
+  for (let i = fxGroup.children.length - 1; i >= 0; i--) {
+    const o = fxGroup.children[i];
+    if (o.isMesh && o.userData.ci !== undefined) {
+      fxGroup.remove(o);
+      o.material.dispose();
+    }
+  }
 }
 
 // グループの中心座標
@@ -1137,9 +1200,9 @@ function spawnBeam(group) {
 // 消える瞬間の「レインボー・ルーレット」。
 // そろったブロックが、短い間だけ虹色をルーレットのように切り替えながら点滅し、
 // 最後に弾けて消える。セルごとに開始の色をずらすので、虹が列/面を走って見える。
-const ROULETTE_SEC = 0.3;     // ルーレットの長さ (短く。テンポを崩さない)
-const ROULETTE_POP = 0.3;     // 弾けて消えるまで
-const ROULETTE_SPINS = 9;     // ルーレットで切り替える色数
+const ROULETTE_SEC = 0.62;    // ルーレットの長さ (ゆっくり見せる)
+const ROULETTE_POP = 0.42;    // 弾けて消えるまで
+const ROULETTE_SPINS = 8;     // ルーレットで切り替える色数 (少ないほどゆっくり回る)
 
 /** 虹色にルーレットしてから弾ける消去アニメ */
 function rouletteVanish(mesh, delay, seed = 0) {
@@ -1153,7 +1216,7 @@ function rouletteVanish(mesh, delay, seed = 0) {
     if (t < ROULETTE_SEC) {
       const k = t / ROULETTE_SEC;
       // だんだん速く回る(k*k)ルーレット。色は段階的に切り替える
-      const step = Math.floor(k * k * ROULETTE_SPINS * 2) + seed;
+      const step = Math.floor(k * k * ROULETTE_SPINS) + seed;
       if (step !== lastStep) {
         lastStep = step;
         const hue = (step * 0.15) % 1;
@@ -1162,16 +1225,18 @@ function rouletteVanish(mesh, delay, seed = 0) {
         mat.emissive.setHSL(hue, 1, 0.5, THREE.SRGBColorSpace);
       }
       mat.emissiveIntensity = 0.5 + 0.5 * Math.sin(k * Math.PI);
-      mesh.scale.setScalar(1 + 0.1 * Math.sin(k * Math.PI * 3));
+      mesh.scale.setScalar(1 + 0.1 * Math.sin(k * Math.PI * 4));
       return true;
     }
-    // 弾けて消える
+    // 弾けて消える。薄くしながら消すので、同じ場所へすぐ置いても邪魔にならない
     const k = Math.min((t - ROULETTE_SEC) / ROULETTE_POP, 1);
-    mesh.scale.setScalar(Math.max(0.001, 1.16 * (1 - k)));
-    mesh.position.y = startY + k * 0.6;
+    if (!mat.transparent) { mat.transparent = true; mat.needsUpdate = true; }
+    mat.opacity = 1 - k;
+    mesh.scale.setScalar(Math.max(0.001, 1.16 * (1 - k * 0.85)));
+    mesh.position.y = startY + k * 0.7;
     mat.emissiveIntensity = 1 - k;
     if (k >= 1) {
-      blocksGroup.remove(mesh);
+      mesh.parent?.remove(mesh);
       mat.dispose();
       return false;
     }
@@ -1325,6 +1390,7 @@ function startGame(modeKey = mode.key) {
     m.material.dispose();
   }
   blockMeshes.clear();
+  clearFadingBlocks();
   cancelHeld();
   clearSolutionGhosts();
   resetRunState();
@@ -1334,6 +1400,7 @@ function startGame(modeKey = mode.key) {
   score = 0;
   combo = 0;
   dealNo = 0;
+  colorShift = 0;
   submitted = false;
   surrendered = false;
   countScore = true;
@@ -1405,6 +1472,7 @@ function restoreBoardFromBlocks(blocks) {
     blocksGroup.remove(m); m.material.dispose();
   }
   blockMeshes.clear();
+  clearFadingBlocks();
   const n = board.n;
   for (const [idx, ci] of blocks) {
     const x = idx % n, y = Math.floor(idx / n) % n, z = Math.floor(idx / (n * n));
@@ -1417,7 +1485,7 @@ function restoreBoardFromBlocks(blocks) {
 function saveGame() {
   if (state !== "play") return;
   const data = {
-    v: 1, mode: mode.key, score, combo, best: runStartBest, dn: dealNo,
+    v: 1, mode: mode.key, score, combo, best: runStartBest, dn: dealNo, cs: colorShift,
     blocks: serializeBlocks(), hand: hand.map((p) => (p ? serPiece(p) : null)),
   };
   try { store.set(SAVE_KEY, JSON.stringify(data)); } catch {}
@@ -1439,6 +1507,7 @@ function resumeGame(d) {
   best = getBest(mode.key);
   runStartBest = Number.isFinite(d.best) ? d.best : best;
   score = d.score || 0;
+  colorShift = d.cs | 0;
   setTone(toneIndexFor(score), { animate: false });   // 舞台を組む前に色合いを決める
   configureForN(mode.grid);   // 盤面・舞台を作り直す
   clearSolutionGhosts();
@@ -1877,6 +1946,10 @@ document.querySelectorAll(".ov-close").forEach((btn) => {
   });
 }
 
+// ダークモード(背景を黒に)の切り替えボタン
+$("btnDark").addEventListener("click", () => { sfx.ui(); setDarkMode(!darkMode); });
+setDarkMode(store.get("dark", "0") === "1", false);   // 前回の設定を復元
+
 function refreshTitleBests() {
   $("titleBestLine").textContent = getBest("line");
   $("titleBestPlane").textContent = getBest("plane");
@@ -2024,6 +2097,11 @@ window.__tsumi = {
   goHome: () => goHome(),
   askQuit: () => askQuit(),
   tone: () => tone.key,
+  dark: () => darkMode,
+  setDark: (on) => setDarkMode(on),
+  colorShift: () => colorShift,
+  // 消える演出の最中のブロック数 (盤面からは既に外れている)
+  fadingCount: () => fxGroup.children.filter((o) => o.isMesh && o.userData.ci !== undefined).length,
   snapped: () => (held ? held.snapped : null),
   overTray: () => (held ? held.overTray : null),
   setTone: (i) => setTone(i, { animate: true, announce: true }),
