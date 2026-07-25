@@ -236,6 +236,22 @@ body:not(.playing) #btnXray { opacity: 0; pointer-events: none; }
   100% { opacity: 0; transform: translate(-50%, -160%) scale(1); }
 }
 
+/* 最適解どおりに置けた時の "good" ポップ (緑・弾む) */
+.pop.good {
+  font-size: 27px;
+  font-weight: 800;
+  letter-spacing: 0.005em;
+  color: #34c759;
+  text-shadow: 0 1px 10px rgba(52, 199, 89, 0.55), 0 1px 8px rgba(255, 255, 255, 0.9);
+  animation: goodfly 1.15s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+@keyframes goodfly {
+  0%   { opacity: 0; transform: translate(-50%, -30%) scale(0.5) rotate(-7deg); }
+  22%  { opacity: 1; transform: translate(-50%, -72%) scale(1.18) rotate(0deg); }
+  40%  { transform: translate(-50%, -82%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -175%) scale(1); }
+}
+
 /* ---- オーバーレイ共通 ---- */
 .ov {
   position: fixed; inset: 0; z-index: 10;

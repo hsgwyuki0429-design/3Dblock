@@ -45,6 +45,12 @@ export const sfx = {
     tone(300, { dur: 0.1, type: "sine", vol: 0.5, glide: -60 });
     tone(600, { dur: 0.07, type: "triangle", vol: 0.18 });
   },
+  good() {
+    // 最適解どおりに置けた時の軽い上昇2音 (褒めのチャイム)
+    tone(784, { dur: 0.11, type: "triangle", vol: 0.28 });          // G5
+    tone(1175, { t: 0.075, dur: 0.16, type: "triangle", vol: 0.26 }); // D6
+    tone(1568, { t: 0.075, dur: 0.14, type: "sine", vol: 0.10 });     // 上ハモリ
+  },
   clear(lines) {
     const base = [523, 659, 784, 988];  // C5 E5 G5 B5
     const count = Math.min(2 + lines, 5);

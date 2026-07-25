@@ -15,9 +15,15 @@ const BRANCH_CAP = 8;       // 解探索の枝刈り (1手あたり試す配置�
 const NO_FIT = -1e9;        // どこにも置けないピース
 
 const BIGCLEAR_PROB = 0.09; // たまに「大きく消せる」ご褒美(面1枚/複数ライン)。出過ぎ防止でやや控えめ
-const FULLCLEAR_PROB = 0.10;// 「全消し(盤面まるごと空)」を狙う頻度。幾何条件が厳しく実際はごくたまに
-const FULLCLEAR_LO = 0.18;  // 全消しを狙う盤面充填率の下限(空すぎるとご褒美感が薄い。低めの方が成功しやすい)
-const FULLCLEAR_HI = 0.74;  // 上限(満杯すぎると全消しはほぼ不可能)
+
+// 「全消し(盤面まるごと空)」を狙う設定。モード別。
+//  prob = 発火確率 / lo,hi = 狙う盤面充填率の帯 / pool,combos = 発火時の探索の厚み
+//  plane は 面(25マス)まるごと消す必要があり全消しが起きにくいので、発火・探索とも厚めにし、
+//  band 下限も下げて(=より空いた=消しやすい局面も拾って)成功率を上げる。
+const FULLCLEAR = {
+  line:  { prob: 0.10, lo: 0.18, hi: 0.74, pool: 18, combos: 14 },
+  plane: { prob: 0.32, lo: 0.12, hi: 0.70, pool: 26, combos: 26 },
+};
 
 const WAYS_CAP = 4;         // 「置き切れる並びの通り数」を数える上限。少ないほど最適解が一意=良い塩梅
 const SOLVABLE_POOL = 5;    // 通り数を比べるために集める「解ける組」の数
@@ -47,9 +53,11 @@ export function dealHand(board, clear, makePiece) {
 
   // ★ ごくたまに: 盤面をまるごと空にできる「全消し」手。埋まり具合が手頃な時だけ狙う。
   //   幾何的に不可能な盤面がほとんどなので、確率を掛けても実際に出るのはごく稀。
-  if (filledRatio >= FULLCLEAR_LO && filledRatio <= FULLCLEAR_HI
-      && Math.random() < FULLCLEAR_PROB) {
-    const fc = findClearAllTrio(board, clear, makePiece);
+  //   plane は全消しが起きにくいので設定を厚くしてある(FULLCLEAR 参照)。
+  const fcCfg = FULLCLEAR[clear] || FULLCLEAR.line;
+  if (filledRatio >= fcCfg.lo && filledRatio <= fcCfg.hi
+      && Math.random() < fcCfg.prob) {
+    const fc = findClearAllTrio(board, clear, makePiece, fcCfg);
     if (fc) return shuffle(fc);
   }
 
@@ -185,10 +193,11 @@ function countWays(board, trio, cap) {
  * 見つかった組は「消しながら置けば盤面が空になる並び」が存在する = 当然置き切れる。
  * 幾何条件が厳しいので大半は null (= このディールでは全消しは出ない)。
  */
-function findClearAllTrio(board, clear, makePiece) {
-  // 全消しは滅多に発火しないご褒美なので、発火時は少し厚めに候補を用意して成功率を上げる。
+function findClearAllTrio(board, clear, makePiece, cfg) {
+  // 全消しは滅多に発火しないご褒美なので、発火時は厚めに候補を用意して成功率を上げる。
+  // cfg.pool / cfg.combos で厚みを調整(plane は厚め)。
   const pool = [];
-  for (let i = 0; i < 18; i++) {
+  for (let i = 0; i < cfg.pool; i++) {
     const p = makePiece();
     if (PL(board, p.cells).length) pool.push(p);
   }
@@ -196,12 +205,12 @@ function findClearAllTrio(board, clear, makePiece) {
   for (const p of pool) p._cp = quickClearPotential(board, clear, p);
   pool.sort((a, b) => b._cp - a._cp);   // 単体で多く消せるピースを前へ
 
-  const M = Math.min(pool.length, 11);
+  const M = Math.min(pool.length, cfg.pool >= 24 ? 13 : 11);
   let tries = 0;
   for (let i = 0; i < M; i++)
     for (let j = i + 1; j < M; j++)
       for (let k = j + 1; k < M; k++) {
-        if (++tries > 14 || opUsed > OP_CAP) return null;   // 全体の試行上限
+        if (++tries > cfg.combos || opUsed > OP_CAP) return null;   // 全体の試行上限
         const trio = [pool[i], pool[j], pool[k]];
         if (canEmptyBoard(board, clear, trio)) return trio;
       }
