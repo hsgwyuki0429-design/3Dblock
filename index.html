@@ -86,7 +86,6 @@
 </header>
 
 <div id="comboToast"></div>
-<div id="chanceBanner"><span class="cb-star">✦</span><span id="chanceText">全消しチャンス</span><span class="cb-star">✦</span></div>
 <div id="popLayer"></div>
 <button id="btnSolveDone">結果へ →</button>
 
@@ -146,6 +145,16 @@
     </div>
     <div id="rankList" class="ranklist"><div class="rank-note">読み込み中…</div></div>
     <button class="btn primary ov-close" data-close="ovRank">とじる</button>
+  </div>
+</div>
+
+<!-- プレイ中にホームを押したときの確認 (誤タップで進行を失わないように) -->
+<div class="ov" id="ovQuit">
+  <div class="ov-inner panel">
+    <h2 class="panel-title">ホームへもどる?</h2>
+    <p class="quit-text">いまの盤面とスコアはセーブされます。<br>タイトルの「つづきから」で、この続きを再開できます。</p>
+    <button id="btnQuitBack" class="btn primary big">← ゲームにもどる</button>
+    <button id="btnQuitHome" class="btn ghost">ホームへもどる</button>
   </div>
 </div>
 
