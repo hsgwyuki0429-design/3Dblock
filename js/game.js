@@ -46,6 +46,8 @@ let mustSave = false;                  // ベスト更新時: 記録するまで
 let surrendered = false;               // (未使用: 降参は廃止)
 let countScore = true;                 // 解の再生中は false (見せるだけ)
 let dealSnapshot = null;               // 配給時の {blocks, pieces} (詰み時の再生用)
+let handPlan = new Map();              // ディーラーが想定する最適解 (piece -> 置くべき [x,y,z])。
+                                       //   プレイヤーがこの位置どおりに置いたら "good" を出す
 let overSnapshot = null;               // 詰んだ瞬間の {blocks, score} (救済復活用)
 let submitted = false;
 
@@ -547,10 +549,26 @@ function refillHand() {
   }
   // 配給時点の盤面と手札を控える (詰み時に「どう置けばよかったか」を再生するため)
   dealSnapshot = { blocks: serializeBlocks(), pieces: hand.slice() };
+  computeHandPlan();
 }
 
 function handEmpty() {
   return hand.every((p) => !p);
+}
+
+/**
+ * いまの手札を「3つとも置き切る」最適解を1つ求めて handPlan に控える。
+ * ディーラーは3つとも置き切れる並びの存在を保証しているので、その解の
+ * 「各ピースを置くべき位置」を記録し、プレイヤーがその通りに置いたら "good" を出す。
+ * solveHand は消去を伴わない共存解(3つが同時に成立する配置)を返すので、置く順に
+ * かかわらず記録した位置は有効。盤面は solveHand 内で必ず復元される。
+ */
+function computeHandPlan() {
+  handPlan = new Map();
+  const live = hand.filter(Boolean);
+  if (!live.length) return;
+  const sol = solveHand(board, live);
+  for (const step of sol) handPlan.set(step.piece, step.pos);
 }
 
 // ---------------------------------------------------------------- ドラッグ&スナップ
@@ -722,6 +740,10 @@ function cancelHeld() {
 // ---------------------------------------------------------------- 配置と消去
 
 function commitPlacement(slot, piece, [ax, ay, az]) {
+  // ディーラーの想定する最適解と同じ位置に置いたか (置く前に判定)
+  const want = handPlan.get(piece);
+  const isGood = !!(want && want[0] === ax && want[1] === ay && want[2] === az);
+
   board.place(piece.cells, ax, ay, az);
   const placedCells = piece.cells.map(([dx, dy, dz]) => [ax + dx, ay + dy, az + dz]);
   piece.cells.forEach(([dx, dy, dz], i) => {
@@ -733,6 +755,9 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
   setTrayPiece(slot, null);
   addScore(piece.cells.length * SCORE.perPlacedCell);
   sfx.place();
+
+  // 最適解どおりに置けたら "good" エフェクト (ピースの中心あたりに出す)
+  if (isGood) spawnGoodPop(placedCells);
 
   const groups = board.completedGroups(mode.clear);
   if (groups.length) {
@@ -991,6 +1016,24 @@ function spawnScorePop(pts, cell) {
   setTimeout(() => el.remove(), 1000);
 }
 
+/** 最適解どおりに置けた時の "good" ポップ (置いたセル群の中心あたりに出す) */
+function spawnGoodPop(cells) {
+  let cx = 0, cy = 0, cz = 0;
+  for (const [x, y, z] of cells) { cx += x; cy += y; cz += z; }
+  const n = cells.length;
+  const p = cellWorld(cx / n, cy / n, cz / n);
+  p.project(camera);
+  const el = document.createElement("div");
+  el.className = "pop good";
+  el.textContent = "good";
+  el.style.left = ((p.x + 1) / 2 * innerWidth) + "px";
+  el.style.top = ((1 - (p.y + 1) / 2) * innerHeight) + "px";
+  $("popLayer").appendChild(el);
+  setTimeout(() => el.remove(), 1150);
+  sfx.good();
+  if (navigator.vibrate) navigator.vibrate(12);
+}
+
 // ---------------------------------------------------------------- ゲームフロー
 
 function startGame(modeKey = mode.key) {
@@ -1100,7 +1143,7 @@ function resumeGame(d) {
   restoreBoardFromBlocks(d.blocks);
   for (let i = 0; i < 3; i++) { hand[i] = d.hand[i] ? desPiece(d.hand[i]) : null; setTrayPiece(i, hand[i]); }
   if (handEmpty()) refillHand();
-  else dealSnapshot = { blocks: serializeBlocks(), pieces: hand.slice() };
+  else { dealSnapshot = { blocks: serializeBlocks(), pieces: hand.slice() }; computeHandPlan(); }
   score = d.score || 0;
   combo = d.combo || 0;
   submitted = false;
@@ -1660,6 +1703,7 @@ window.__tsumi = {
     return commitPlacement(slot, p, [x, y, z]);
   },
   placements: (slot) => (hand[slot] ? board.allPlacements(hand[slot].cells) : []),
+  planFor: (slot) => (hand[slot] ? (handPlan.get(hand[slot]) || null) : null),   // 最適解の置き位置
   checkOver: () => checkGameOver(),
   refill: () => refillHand(),
   goHome: () => goHome(),
