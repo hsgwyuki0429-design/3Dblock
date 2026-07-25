@@ -54,6 +54,41 @@ body {
   background: radial-gradient(100% 82% at 50% 42%, transparent 72%, rgba(0, 0, 0, 0.045) 100%);
 }
 
+/* ---- 暗いドームのトーン(ネオン/オーロラ)用 ----
+   ブロックの蛍光色を活かすためドームを暗くするので、
+   その間だけ HUD まわりの色を明るい側へ反転する(文字が読めなくならないように) */
+body[data-dark="1"] {
+  --ink: #f6f7fb;
+  --sub: rgba(255, 255, 255, 0.66);
+  --hair: rgba(255, 255, 255, 0.18);
+  --surface: rgba(255, 255, 255, 0.12);
+  --accent: #5cc8ff;
+  --accent-press: #3fb2ee;
+  --accent-tint: rgba(92, 200, 255, 0.18);
+}
+body[data-dark="1"] .iconbtn,
+body[data-dark="1"] .fab {
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+body[data-dark="1"] .iconbtn:active { background: rgba(255, 255, 255, 0.22); }
+body[data-dark="1"] .tray-card { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); }
+body[data-dark="1"] #comboToast,
+body[data-dark="1"] .pop { text-shadow: 0 1px 12px rgba(0, 0, 0, 0.75); }
+body[data-dark="1"] #vignette {
+  background: radial-gradient(100% 82% at 50% 42%, transparent 66%, rgba(0, 0, 0, 0.3) 100%);
+}
+/* オーバーレイ(白いパネル)の中だけは、暗いトーンでも元の色に戻す。
+   白地に白文字になってしまうのを防ぐ */
+body[data-dark="1"] .ov {
+  --ink: #1d1d1f;
+  --sub: #6e6e73;
+  --hair: rgba(0, 0, 0, 0.10);
+  --surface: rgba(255, 255, 255, 0.72);
+  --accent: #0071e3;
+  --accent-press: #0060c8;
+  --accent-tint: rgba(0, 113, 227, 0.10);
+}
+
 canvas#gl {
   position: fixed; inset: 0; z-index: 2;
   width: 100%; height: 100%;
