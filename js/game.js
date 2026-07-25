@@ -137,13 +137,15 @@ const LIT_COLOR = 0xffd76a;
 const LIT_EMISSIVE = 0xffab00;
 
 // ---- すきま可視化 (X-ray) ----
-// ON: 元々埋まってるブロックは完全に透明(見えなく)にして、空いてるマスを全部 金色の半透明で示す
+// ON: 元々埋まってるブロックは完全に透明(見えなく)にして、
+//     空いてるマスを全部 金色の「中身のつまった」ブロックで示す(透け無し)
 const XRAY_OPACITY = 0;              // ON時のブロック透明度(0=完全に透明)
 const markerGeo = new RoundedBoxGeometry(CUBE, CUBE, CUBE, 4, 0.1);   // 通常ブロックと同じ大きさ
+// 中身がつまって見えるぶん、色は少し濃いめの金にする(消去予告の金より一段深い)
+const MARKER_COLOR = 0xffc23a;
 const markerMat = new THREE.MeshStandardMaterial({
-  color: LIT_COLOR, emissive: LIT_EMISSIVE, emissiveIntensity: 0.95,
+  color: MARKER_COLOR, emissive: LIT_EMISSIVE, emissiveIntensity: 0.45,
   roughness: 0.3, metalness: 0.0,
-  transparent: true, opacity: 0.4, depthWrite: false,
 });
 let xrayOn = false;
 
@@ -942,10 +944,7 @@ function commitPlacement(slot, piece, [ax, ay, az]) {
   if (board.isEmptyBoard()) {
     clearRun = false;
     addScore(SCORE.fullClearBonus);
-    showToast("全消し!");
-    sfx.chance();
-    shake = Math.max(shake, 1.2);
-    if (navigator.vibrate) navigator.vibrate([24, 50, 24, 50, 40]);
+    spawnFullClearFx();
   }
 
   if (handEmpty()) refillHand();       // refillHand 側で最適解を計算し直す
@@ -979,15 +978,76 @@ function doClear(groups, nearCell) {
     if (mode.clear === "plane") spawnSheet(group);
     else spawnBeam(group);
     spawnRing(group);
-    // ブロックをふくらませて弾く
+    // ブロックを虹色にルーレットさせてから弾く (面は数が多いので出だしのずれを抑える)
     group.cells.forEach((cell, i) => {
       const mesh = blockMeshes.get(board.idx(...cell));
       if (!mesh) return;
       blockMeshes.delete(board.idx(...cell));
-      anims.push(vanish(mesh, i * 0.03));
+      anims.push(rouletteVanish(mesh, Math.min(i * 0.02, 0.16), i));
     });
     spawnBurst(group.cells, { per: 7, size: 0.34, life: 0.85 });
   }
+}
+
+// ---- 全消しの豪華演出 ----
+//
+// いちばん大きなご褒美なので、ここだけは特別扱い:
+//   1. 画面全体の虹色フラッシュ (CSS)
+//   2. 盤面の中心から広がる虹色のリングを3枚、時間差で
+//   3. 立方体まるごとから虹色の粒が噴き上がる
+//   4. 「全消し!」を虹色グラデーションの特大トーストで
+//   5. 強めのシェイクと長い振動
+function spawnFullClearFx() {
+  showToast("全消し!", true);
+  sfx.chance();
+  shake = Math.max(shake, 1.8);
+  if (navigator.vibrate) navigator.vibrate([30, 60, 30, 60, 30, 90]);
+
+  // 1. 画面フラッシュ
+  const flash = $("flash");
+  if (flash) {
+    flash.classList.remove("show");
+    void flash.offsetWidth;
+    flash.classList.add("show");
+  }
+
+  // 2. 虹色のリング (時間差で3枚)
+  const center = new THREE.Vector3(0, N * 0.35, 0);
+  for (let i = 0; i < 3; i++) spawnRainbowRing(center, i * 0.14, i / 3);   // 赤・緑・青から回す
+
+  // 3. 立方体の全域から虹色の粒
+  const cells = [];
+  for (let x = 0; x < N; x++)
+    for (let y = 0; y < N; y += 2)
+      for (let z = 0; z < N; z++)
+        if ((x + z) % 2 === 0) cells.push([x, y, z]);
+  spawnBurst(cells, {
+    per: 4, size: 0.42, life: 1.5, up: 7, spread: 5, rainbow: true,
+  });
+}
+
+/** 全消し用: 盤面の中心から大きく広がる虹色のリング */
+function spawnRainbowRing(center, delay, hue) {
+  const geo = new THREE.RingGeometry(0.5, 0.68, 64);
+  const mat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setHSL(hue % 1, 1, 0.6, THREE.SRGBColorSpace),
+    transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.copy(center);
+  fxGroup.add(m);
+  let t = -delay;
+  anims.push((dt) => {
+    t += dt;
+    if (t < 0) return true;
+    const k = t / 0.85;
+    m.scale.setScalar(1 + k * N * 1.8);
+    mat.color.setHSL((hue + k * 0.5) % 1, 1, 0.6, THREE.SRGBColorSpace);   // 広がりながら色が回る
+    mat.opacity = 0.6 * (1 - k);
+    if (k >= 1) { fxGroup.remove(m); geo.dispose(); mat.dispose(); return false; }
+    return true;
+  });
 }
 
 // グループの中心座標
@@ -1074,27 +1134,45 @@ function spawnBeam(group) {
   });
 }
 
-/** 軽くふくらんで持ち上がりながらフェードアウトする消去アニメ */
-function vanish(mesh, delay) {
+// 消える瞬間の「レインボー・ルーレット」。
+// そろったブロックが、短い間だけ虹色をルーレットのように切り替えながら点滅し、
+// 最後に弾けて消える。セルごとに開始の色をずらすので、虹が列/面を走って見える。
+const ROULETTE_SEC = 0.3;     // ルーレットの長さ (短く。テンポを崩さない)
+const ROULETTE_POP = 0.3;     // 弾けて消えるまで
+const ROULETTE_SPINS = 9;     // ルーレットで切り替える色数
+
+/** 虹色にルーレットしてから弾ける消去アニメ */
+function rouletteVanish(mesh, delay, seed = 0) {
   let t = -delay;
   const startY = mesh.position.y;
+  const mat = mesh.material;
+  let lastStep = -1;
   return (dt) => {
     t += dt;
     if (t < 0) return true;
-    const life = t / 0.46;
-    if (life < 0.28) {
-      const k = life / 0.28;
-      mesh.scale.setScalar(1 + 0.14 * Math.sin(k * Math.PI));
-      mesh.material.emissiveIntensity = BASE_EMISSIVE + 0.7 * k;
-    } else {
-      const k = (life - 0.28) / 0.72;
-      mesh.scale.setScalar(Math.max(0.001, 1 - k));
-      mesh.position.y = startY + k * 0.55;
-      mesh.material.emissiveIntensity = BASE_EMISSIVE + 0.7 * (1 - k);
+    if (t < ROULETTE_SEC) {
+      const k = t / ROULETTE_SEC;
+      // だんだん速く回る(k*k)ルーレット。色は段階的に切り替える
+      const step = Math.floor(k * k * ROULETTE_SPINS * 2) + seed;
+      if (step !== lastStep) {
+        lastStep = step;
+        const hue = (step * 0.15) % 1;
+        // setHSL は既定がリニア色空間で色がくすむので sRGB を明示する
+        mat.color.setHSL(hue, 1, 0.56, THREE.SRGBColorSpace);
+        mat.emissive.setHSL(hue, 1, 0.5, THREE.SRGBColorSpace);
+      }
+      mat.emissiveIntensity = 0.5 + 0.5 * Math.sin(k * Math.PI);
+      mesh.scale.setScalar(1 + 0.1 * Math.sin(k * Math.PI * 3));
+      return true;
     }
-    if (life >= 1) {
+    // 弾けて消える
+    const k = Math.min((t - ROULETTE_SEC) / ROULETTE_POP, 1);
+    mesh.scale.setScalar(Math.max(0.001, 1.16 * (1 - k)));
+    mesh.position.y = startY + k * 0.6;
+    mat.emissiveIntensity = 1 - k;
+    if (k >= 1) {
       blocksGroup.remove(mesh);
-      mesh.material.dispose();
+      mat.dispose();
       return false;
     }
     return true;
@@ -1118,6 +1196,7 @@ const sparkTex = (() => {
 function spawnBurst(cells, opts = {}) {
   const per = opts.per ?? 5;
   const life = opts.life ?? 0.7;
+  const spread = opts.spread ?? 3;
   const count = cells.length * per;
   const pos = new Float32Array(count * 3);
   const vels = [];
@@ -1127,9 +1206,9 @@ function spawnBurst(cells, opts = {}) {
     cellWorld(cell[0], cell[1], cell[2], p);
     pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
     vels.push(new THREE.Vector3(
-      (Math.random() - 0.5) * 3,
+      (Math.random() - 0.5) * spread,
       Math.random() * (opts.up ?? 3),
-      (Math.random() - 0.5) * 3,
+      (Math.random() - 0.5) * spread,
     ));
   }
   const geo = new THREE.BufferGeometry();
@@ -1140,6 +1219,18 @@ function spawnBurst(cells, opts = {}) {
     size: opts.size ?? 0.3, transparent: true, opacity: 0.9,
     depthWrite: false, sizeAttenuation: true,
   });
+  // 虹色: 粒ひとつずつに色を持たせる
+  if (opts.rainbow) {
+    const colors = new Float32Array(count * 3);
+    const c = new THREE.Color();
+    for (let i = 0; i < count; i++) {
+      c.setHSL((i / count + Math.random() * 0.05) % 1, 1, 0.62, THREE.SRGBColorSpace);
+      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    mat.vertexColors = true;
+    mat.color.setHex(0xffffff);
+  }
   const points = new THREE.Points(geo, mat);
   fxGroup.add(points);
   let t = 0;
@@ -1153,8 +1244,8 @@ function spawnBurst(cells, opts = {}) {
       arr[i * 3 + 2] += vels[i].z * dt;
     }
     geo.attributes.position.needsUpdate = true;
-    mat.opacity = Math.max(0, 0.9 * (1 - t / 0.7));
-    if (t >= 0.7) {
+    mat.opacity = Math.max(0, 0.9 * (1 - t / life));
+    if (t >= life) {
       fxGroup.remove(points);
       geo.dispose(); mat.dispose();
       return false;
@@ -1180,12 +1271,13 @@ function addScore(pts) {
   updateTone();   // 一定スコアごとに色合い(ドーム・ブロック)が変わる
 }
 
-function showToast(text) {
+function showToast(text, rainbow = false) {
   const el = $("comboToast");
   el.textContent = text;
-  el.classList.remove("show");
+  el.classList.remove("show", "rainbow");
   void el.offsetWidth;
   el.classList.add("show");
+  if (rainbow) el.classList.add("rainbow");
 }
 
 function spawnScorePop(pts, cell) {
@@ -1871,7 +1963,7 @@ function tick() {
   }
 
   // すきまマーカーのパルス
-  if (xrayOn) markerMat.emissiveIntensity = 0.85 + 0.4 * Math.sin(t * 5);
+  if (xrayOn) markerMat.emissiveIntensity = 0.42 + 0.22 * Math.sin(t * 5);
 
   // 降りてくるピース全体の外周の縁のパルス(光るのは着地するまでの間だけ)
   if (solutionGhosts.length) {
@@ -1951,6 +2043,8 @@ window.__tsumi = {
   litCount: () => (held ? held.litMeshes.length : 0),
   setXray: (on) => setXray(on),
   markerCount: () => xrayGroup.children.length,
+  markerTransparent: () => markerMat.transparent,
+  markerOpacity: () => markerMat.opacity,
   solutionCount: () => solutionGhosts.length,
   hasSave: () => !!loadSave(),
   filled: () => board.cells.reduce((a, b) => a + b, 0),
