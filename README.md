@@ -222,8 +222,11 @@ GitHub Pages なら: リポジトリの Settings → Pages → Branch にこの�
 ## スマホアプリのように使う (PWA)
 
 - **アプリ内ブラウザからの脱出**: LINE 等のアプリ内ブラウザで開くと、LINE は公式の
-  `openExternalBrowser=1` で自動的に Safari / Chrome へ飛ぶ。抜けられない環境
-  (iOS の Instagram 等)では「ブラウザで開く / URLをコピー」の案内を表示する。
+  `openExternalBrowser=1` で自動的に Safari / Chrome へ飛ぶ。
+  **抜けられない環境(iOS の Instagram 等)でも、そのまますぐ遊べる**ようにしてある。
+  画面をふさぐオーバーレイではなく、上部に小さな帯で「ブラウザで開く / URLをコピー」を
+  出すだけなので、タイトルからそのままプレイできる。プレー中は帯を引っ込め、
+  ✕ でとじたら次からは出さない(端末に記憶)。
 - **全画面表示**: `manifest.json`(`display: fullscreen`)と Apple 用メタタグにより、
   ホーム画面から起動するとブラウザのバーが消えて全画面になる。
 - **ホーム画面に追加**: マニフェスト + アイコン + Service Worker(`sw.js`)対応。
@@ -241,7 +244,7 @@ GitHub Pages なら: リポジトリの Settings → Pages → Branch にこの�
 アプリのバージョンは [`js/config.js`](js/config.js) の `APP_VERSION` が唯一の基準で、
 タイトル画面の右下に「v◯.◯」と表示される。**マージ(リリース)のたびに +0.1** し、
 同時に `sw.js` の `VERSION`(キャッシュ名)も同じ番号へ更新してキャッシュを入れ替える。
-現在は **3.6**。
+現在は **3.7**。
 
 ## オンライン世界ランキングを有効にする(約5分)
 
