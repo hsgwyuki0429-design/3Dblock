@@ -178,19 +178,14 @@
   </div>
 </div>
 
-<!-- アプリ内ブラウザ向け 案内オーバーレイ -->
-<div class="ov" id="ovBrowser">
-  <div class="ov-inner panel">
-    <div class="ob-badge">
-      <img src="icons/icon-192.png" alt="3Dblocks" width="72" height="72">
-    </div>
-    <h2 class="panel-title">ブラウザで開こう</h2>
-    <p class="ob-text">アプリ内ブラウザでは全画面やホーム画面追加ができません。<br>Safari / Chrome で開くと快適に遊べます。</p>
-    <button id="btnOpenExternal" class="btn primary big">ブラウザで開く</button>
-    <button id="btnCopyUrl" class="btn ghost">URLをコピー</button>
-    <p class="ob-hint" id="obHint"></p>
-    <button id="btnDismissBrowser" class="ob-dismiss">このまま続ける</button>
+<!-- アプリ内ブラウザ向けの案内 (画面をふさがない小さな帯。そのまま遊べる) -->
+<div id="appHint">
+  <p class="ah-text" id="ahText">アプリ内ブラウザで開いています。<b>Safari / Chrome</b> で開くと全画面で遊べます。</p>
+  <div class="ah-actions">
+    <button id="btnOpenExternal" class="ah-btn">ブラウザで開く</button>
+    <button id="btnCopyUrl" class="ah-btn ghost">URLをコピー</button>
   </div>
+  <button id="btnDismissBrowser" class="ah-close" aria-label="この案内をとじる">✕</button>
 </div>
 
 <script>
@@ -213,11 +208,15 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-// アプリ内ブラウザ検出時の案内
+// アプリ内ブラウザ検出時の案内。
+// 外部ブラウザへ飛べなかった場合でも、画面をふさがずにそのまま遊べるよう、
+// 全画面のオーバーレイではなく上部の小さな帯で知らせる。
 (function () {
   if (!window.__inAppBrowser) return;
-  var ov = document.getElementById("ovBrowser");
-  var hint = document.getElementById("obHint");
+  var bar = document.getElementById("appHint");
+  var hint = document.getElementById("ahText");
+  var KEY = "blocks3d.appHint";       // 一度とじたら次からは出さない
+  try { if (localStorage.getItem(KEY) === "off") return; } catch (e) {}
   var ua = navigator.userAgent || "";
   var isAndroid = /Android/i.test(ua);
 
@@ -250,9 +249,10 @@ if ("serviceWorker" in navigator) {
     hint.textContent = "URLをコピーしました。ブラウザ(Safari/Chrome)に貼り付けて開いてください。";
   });
   document.getElementById("btnDismissBrowser").addEventListener("click", function () {
-    ov.classList.remove("show");
+    bar.classList.remove("show");
+    try { localStorage.setItem(KEY, "off"); } catch (e) {}
   });
-  ov.classList.add("show");
+  bar.classList.add("show");
 })();
 </script>
 
