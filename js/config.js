@@ -1,7 +1,7 @@
 // ========================== 3Dblocks 設定 ==========================
 
 // アプリのバージョン (マージのたびに +0.1)
-export const APP_VERSION = "3.5";
+export const APP_VERSION = "3.6";
 
 // グリッドの一辺 (既定)
 export const GRID_N = 5;
@@ -37,12 +37,16 @@ export const RANKING = {
 // 色は base(面色)だけ書けばよい。発光色と輪郭色は自動で作る。
 // 新しいトーンを足したいときは TONES に1つ追加するだけ。
 //
-// 任意で足せる設定 (省略時は明るいトーン向けの既定値):
-//   dark     : 暗いドームのトーン。HUD の文字色などを明るい側へ反転する
+// 背景を暗くするのは「ダークモード」だけの役目にしてある。
+// トーンはドームの"色みたい"を変えるだけで、勝手に暗くはしない。
+//
+// 任意で足せる設定 (省略時の既定値):
 //   emissive : ブロックの発光の強さ (既定 0.14 / 蛍光トーンは高くして光らせる)
-//   env      : 環境光の映り込みの強さ (既定 0.75 / 暗いトーンは下げて発光を活かす)
+//   env      : 環境光の映り込みの強さ (既定 0.75)
 //   light    : { ambient, key, fill, exposure } ライトの強さと露出
 //              (既定 0.85 / 1.7 / 0.5 / 1.05)
+//   dark     : ドームが暗いトーン。HUD の文字色などを明るい側へ反転する
+//              (いまは使っていない。ダークモードがこの仕組みを使う)
 
 const mix = (hex, target, k) => {
   const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
@@ -89,16 +93,15 @@ export const TONES = [
     ]),
   },
   {
-    // 蛍光色。暗いドームに変えて、ブロック自身が光っているように見せる
-    key: "neon", label: "ネオン", dark: true,
-    dome: ["#2a1f52", "#150f2d", "#080614"],
-    floor: 0x1d1738, grid: 0x7a5ce8, cage: 0x7a5ce8,
-    emissive: 0.62, env: 0.3,
-    light: { ambient: 0.4, key: 0.85, fill: 0.2, exposure: 1.0 },
+    // 蛍光色。ドームは明るいまま(背景を暗くするのはダークモードだけの役目)
+    key: "neon", label: "ネオン",
+    dome: ["#ffffff", "#f8f2ff", "#ece0ff"],
+    floor: 0xf6f1ff, grid: 0xceb9ef, cage: 0xceb9ef,
+    emissive: 0.3,
     palette: palette([
       0xff2d95, 0xccff00, 0x00e5ff, 0xff6b00,
       0xb026ff, 0x39ff14, 0xffe600, 0x00ffc8,
-    ], 0.12),
+    ], 0.2),
   },
   {
     key: "ocean", label: "オーシャン",
@@ -110,16 +113,15 @@ export const TONES = [
     ]),
   },
   {
-    // 蛍光色その2。深い藍のドームに、寒色の蛍光がゆらぐオーロラ
-    key: "aurora", label: "オーロラ", dark: true,
-    dome: ["#0f3247", "#0a1c2f", "#040a16"],
-    floor: 0x102639, grid: 0x2f8fb8, cage: 0x2f8fb8,
-    emissive: 0.58, env: 0.32,
-    light: { ambient: 0.42, key: 0.9, fill: 0.22, exposure: 1.0 },
+    // 蛍光色その2。寒色の蛍光がゆらぐオーロラ (ドームは明るいまま)
+    key: "aurora", label: "オーロラ",
+    dome: ["#f8ffff", "#e6fbff", "#cdf1fb"],
+    floor: 0xecfaff, grid: 0xa4d6e8, cage: 0xa4d6e8,
+    emissive: 0.28,
     palette: palette([
       0x00ffa3, 0x21e6ff, 0x7cff4d, 0x00d0ff,
       0xb14dff, 0x38ffd6, 0x5ea8ff, 0xff5ce1,
-    ], 0.12),
+    ], 0.2),
   },
   {
     key: "forest", label: "フォレスト",
